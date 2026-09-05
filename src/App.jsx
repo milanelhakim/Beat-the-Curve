@@ -27,13 +27,11 @@ import {
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
-/*  Constants & helpers                                                */
+/*  Constants & helpers                                               */
 /* ------------------------------------------------------------------ */
-
 const WEEK_COUNT = 12;
 const STORAGE_KEY = "beat-the-curve-data-v1";
 const SCHEMA_VERSION = 1;
-
 const COMMON_COURSES = [
   "Torts",
   "Contracts",
@@ -147,7 +145,6 @@ function makePrewrite({ title = "Untitled attack outline", content = "" } = {}) 
 /*  passes through here on load and on import, so missing fields are   */
 /*  filled in and nothing already saved is ever discarded.             */
 /* ------------------------------------------------------------------ */
-
 function hydrateLinkedCase(c) {
   if (!c || typeof c !== "object") return makeLinkedCase();
   return {
@@ -348,7 +345,6 @@ function compileWeekContent(week) {
   const lines = [];
   const briefs = week.readingNotes.filter((n) => n.type === "brief" && noteHasContent(n));
   const others = week.readingNotes.filter((n) => n.type !== "brief" && noteHasContent(n));
-
   if (briefs.length) {
     lines.push(`### Case briefs`);
     briefs.forEach((n) => lines.push(compileNoteContent(n)));
@@ -358,7 +354,6 @@ function compileWeekContent(week) {
     lines.push(compileNoteContent(n));
     lines.push("");
   });
-
   const { discussion, emphasis, keyRules } = week.lecture;
   if (keyRules && keyRules.trim()) {
     lines.push(`### Key rules from lecture`);
@@ -402,30 +397,14 @@ function buildPrewriteFromNote(note) {
       : note.title || "Untitled attack outline";
   const ruleSeed = note.type === "brief" ? note.holding : note.type === "concept" ? note.summary : note.currentRule;
   const authorities = buildAuthoritiesList(note);
-  const content = `## ${title}
-
-**Rule:** ${ruleSeed && ruleSeed.trim() ? ruleSeed.trim() : "[State the governing rule or elements]"}
-
-**Application:** [Insert Name of Accused/Party] arguably [insert defendant's action] when [insert conduct] occurred on [Insert Date/Location]. This element is [satisfied / not satisfied] because [tie reasoning to the rule].
-
-**Counterargument:** [Insert Opposing Party]'s strongest response is that [insert counterargument].
-
-**Conclusion:** A court would likely find that [insert predicted outcome].${
+  const content = `## ${title}\n\n**Rule:** ${ruleSeed && ruleSeed.trim() ? ruleSeed.trim() : "[State the governing rule or elements]"}\n\n**Application:** [Insert Name of Accused/Party] arguably [insert defendant's action] when [insert conduct] occurred on [Insert Date/Location]. This element is [satisfied / not satisfied] because [tie reasoning to the rule].\n\n**Counterargument:** [Insert Opposing Party]'s strongest response is that [insert counterargument].\n\n**Conclusion:** A court would likely find that [insert predicted outcome].${
     authorities ? `\n\n**Authorities:**\n${authorities}` : ""
   }`;
   return makePrewrite({ title, content });
 }
 
 function iracTemplate() {
-  return `## [Cause of Action / Doctrine Name]
-
-**Rule:** [State the governing rule or elements]
-
-**Application:** [Insert Name of Accused/Party] arguably [insert defendant's action] when [insert conduct] occurred on [Insert Date/Location]. This element is [satisfied / not satisfied] because [tie reasoning to the rule].
-
-**Counterargument:** [Insert Opposing Party]'s strongest response is that [insert counterargument].
-
-**Conclusion:** A court would likely find that [insert predicted outcome].`;
+  return `## [Cause of Action / Doctrine Name]\n\n**Rule:** [State the governing rule or elements]\n\n**Application:** [Insert Name of Accused/Party] arguably [insert defendant's action] when [insert conduct] occurred on [Insert Date/Location]. This element is [satisfied / not satisfied] because [tie reasoning to the rule].\n\n**Counterargument:** [Insert Opposing Party]'s strongest response is that [insert counterargument].\n\n**Conclusion:** A court would likely find that [insert predicted outcome].`;
 }
 
 /* ---- tiny, safe markdown-lite renderer (headings, bold, italic, code, bullets) ---- */
@@ -453,7 +432,6 @@ function renderMdLite(raw) {
       .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
       .replace(/(^|[^*])\*(?!\*)(.+?)\*(?!\*)/g, "$1<em>$2</em>")
       .replace(/`(.+?)`/g, "<code>$1</code>");
-
   lines.forEach((line) => {
     const trimmed = line.trim();
     if (!trimmed) {
@@ -487,7 +465,6 @@ function renderMdLite(raw) {
 /* ------------------------------------------------------------------ */
 /*  Document export (Word / PDF) — shared "blocks" content model       */
 /* ------------------------------------------------------------------ */
-
 function mdToBlocks(raw) {
   if (!raw || !raw.trim()) return [{ type: "p", text: "Nothing written yet." }];
   const lines = raw.split("\n");
@@ -642,26 +619,7 @@ function blocksToHtml(blocks) {
 }
 
 function buildWordHtml(title, bodyHtml) {
-  return `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-<head>
-<meta charset="utf-8">
-<title>${escapeHtml(title)}</title>
-<!--[if gte mso 9]>
-<xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml>
-<![endif]-->
-<style>
-  body { font-family: Georgia, 'Times New Roman', serif; color: #211D17; font-size: 12pt; line-height: 1.5; }
-  h1 { font-size: 20pt; margin: 0 0 6pt; }
-  h2 { font-size: 15pt; margin: 20pt 0 6pt; border-bottom: 1pt solid #cccccc; padding-bottom: 4pt; }
-  h3 { font-size: 13pt; margin: 14pt 0 4pt; }
-  h4 { font-size: 11.5pt; margin: 10pt 0 3pt; }
-  p { margin: 0 0 6pt; }
-  ul { margin: 0 0 8pt 18pt; padding: 0; }
-  li { margin-bottom: 3pt; }
-</style>
-</head>
-<body>${bodyHtml}</body>
-</html>`;
+  return `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]--><style>  body { font-family: Georgia, 'Times New Roman', serif; color: #211D17; font-size: 12pt; line-height: 1.5; }  h1 { font-size: 20pt; margin: 0 0 6pt; }  h2 { font-size: 15pt; margin: 20pt 0 6pt; border-bottom: 1pt solid #cccccc; padding-bottom: 4pt; }  h3 { font-size: 13pt; margin: 14pt 0 4pt; }  h4 { font-size: 11.5pt; margin: 10pt 0 3pt; }  p { margin: 0 0 6pt; }  ul { margin: 0 0 8pt 18pt; padding: 0; }  li { margin-bottom: 3pt; }</style></head><body>${bodyHtml}</body></html>`;
 }
 
 function downloadBlob(filename, mime, content) {
@@ -705,14 +663,12 @@ async function blocksToPdfAndSave(blocks, filename) {
   const pageHeight = doc.internal.pageSize.getHeight();
   const maxWidth = pageWidth - marginX * 2;
   let y = 64;
-
   const ensureSpace = (needed) => {
     if (y + needed > pageHeight - 56) {
       doc.addPage();
       y = 64;
     }
   };
-
   blocks.forEach((b) => {
     if (b.type === "space") {
       y += 10;
@@ -754,7 +710,6 @@ async function blocksToPdfAndSave(blocks, filename) {
     });
     if (b.type.startsWith("h")) y += 4;
   });
-
   doc.save(filename);
 }
 
@@ -782,7 +737,6 @@ async function exportDoc({ blocks, baseName, format, showToast }) {
 function DownloadMenu({ label = "Download", buildBlocks, baseName, showToast }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
-
   useEffect(() => {
     const onClick = (e) => {
       if (ref.current && !ref.current.contains(e.target)) setOpen(false);
@@ -790,13 +744,11 @@ function DownloadMenu({ label = "Download", buildBlocks, baseName, showToast }) 
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
-
   const handle = async (format) => {
     setOpen(false);
     const blocks = buildBlocks();
     await exportDoc({ blocks, baseName, format, showToast });
   };
-
   return (
     <div className="btc-download-wrap" ref={ref}>
       <button className="btc-btn btc-btn-outline small" onClick={() => setOpen((v) => !v)}>
@@ -819,7 +771,6 @@ function DownloadMenu({ label = "Download", buildBlocks, baseName, showToast }) 
 /* ------------------------------------------------------------------ */
 /*  Small UI atoms                                                     */
 /* ------------------------------------------------------------------ */
-
 function Field({ label, children }) {
   return (
     <div className="btc-field">
@@ -836,7 +787,6 @@ function TextArea(props) {
 /* ------------------------------------------------------------------ */
 /*  Case brief card                                                     */
 /* ------------------------------------------------------------------ */
-
 function NoteActions({ onOutline, onPrewrite, onDelete }) {
   return (
     <div className="btc-note-actions">
@@ -879,7 +829,6 @@ function CaseBriefCard({ index, data, onChange, onDelete, onOutline, onPrewrite,
         </div>
         <NoteActions onOutline={onOutline} onPrewrite={onPrewrite} onDelete={onDelete} />
       </div>
-
       <div className="btc-case-body">
         <Field label="Facts">
           <TextArea
@@ -932,7 +881,6 @@ function ConceptNoteCard({ index, data, onChange, onDelete, onOutline, onPrewrit
     onChange({ ...data, cases: data.cases.map((c) => (c.id === lcId ? next : c)) });
   const addLinked = () => onChange({ ...data, cases: [...data.cases, makeLinkedCase()] });
   const removeLinked = (lcId) => onChange({ ...data, cases: data.cases.filter((c) => c.id !== lcId) });
-
   return (
     <div id={`note-${data.id}`} className={`btc-case-card${isFlash ? " btc-flash" : ""}`}>
       <div className="btc-case-header">
@@ -948,7 +896,6 @@ function ConceptNoteCard({ index, data, onChange, onDelete, onOutline, onPrewrit
         </div>
         <NoteActions onOutline={onOutline} onPrewrite={onPrewrite} onDelete={onDelete} />
       </div>
-
       <div className="btc-case-body">
         <Field label="Synthesis">
           <TextArea
@@ -981,16 +928,16 @@ function ConceptNoteCard({ index, data, onChange, onDelete, onOutline, onPrewrit
                 onChange={(e) => updateLinked(c.id, { ...c, note: e.target.value })}
               />
               <button
-                className="btc-icon-btn small"
+                className="btc-icon-btn small danger"
                 onClick={() => removeLinked(c.id)}
-                title="Remove case"
+                aria-label="Remove case link"
               >
-                <Trash2 size={13} />
+                <X size={14} />
               </button>
             </div>
           ))}
           <button className="btc-btn btc-btn-outline small" onClick={addLinked}>
-            <Plus size={13} /> Link a case
+            <Plus size={13} /> Add linked case
           </button>
         </div>
       </div>
@@ -1000,18 +947,10 @@ function ConceptNoteCard({ index, data, onChange, onDelete, onOutline, onPrewrit
 
 function EvolutionNoteCard({ index, data, onChange, onDelete, onOutline, onPrewrite, flashId }) {
   const isFlash = flashId === data.id;
-  const updateEntry = (teId, next) =>
+  const updateTimeline = (teId, next) =>
     onChange({ ...data, timeline: data.timeline.map((t) => (t.id === teId ? next : t)) });
-  const addEntry = () => onChange({ ...data, timeline: [...data.timeline, makeTimelineEntry()] });
-  const removeEntry = (teId) => onChange({ ...data, timeline: data.timeline.filter((t) => t.id !== teId) });
-  const moveEntry = (idx, dir) => {
-    const arr = [...data.timeline];
-    const target = idx + dir;
-    if (target < 0 || target >= arr.length) return;
-    [arr[idx], arr[target]] = [arr[target], arr[idx]];
-    onChange({ ...data, timeline: arr });
-  };
-
+  const addTimeline = () => onChange({ ...data, timeline: [...data.timeline, makeTimelineEntry()] });
+  const removeTimeline = (teId) => onChange({ ...data, timeline: data.timeline.filter((t) => t.id !== teId) });
   return (
     <div id={`note-${data.id}`} className={`btc-case-card${isFlash ? " btc-flash" : ""}`}>
       <div className="btc-case-header">
@@ -1020,81 +959,61 @@ function EvolutionNoteCard({ index, data, onChange, onDelete, onOutline, onPrewr
           <span className="btc-note-badge evolution">Evolution of law</span>
           <input
             className="btc-case-name-input"
-            placeholder="Doctrine tracked over time (e.g., Personal Jurisdiction)"
+            placeholder="Topic/Rule name (e.g., Proximate Cause / Palsgraf Line)"
             value={data.title}
             onChange={(e) => onChange({ ...data, title: e.target.value })}
           />
         </div>
         <NoteActions onOutline={onOutline} onPrewrite={onPrewrite} onDelete={onDelete} />
       </div>
-
       <div className="btc-case-body">
-        <div className="btc-current-rule-box">
-          <div className="btc-field-label">Current governing rule</div>
+        <Field label="Current governing rule">
           <TextArea
             rows={3}
-            placeholder="The rule as it stands today..."
+            placeholder="State the rule as applied today..."
             value={data.currentRule}
             onChange={(e) => onChange({ ...data, currentRule: e.target.value })}
           />
-        </div>
+        </Field>
         <div className="btc-linked-cases">
-          <div className="btc-linked-cases-label">History, oldest to newest</div>
-          {data.timeline.map((t, i) => (
-            <div className="btc-timeline-row" key={t.id}>
-              <div className="btc-timeline-reorder">
-                <button
-                  className="btc-icon-btn small"
-                  onClick={() => moveEntry(i, -1)}
-                  disabled={i === 0}
-                  title="Move earlier"
-                >
-                  <ArrowUp size={12} />
-                </button>
-                <button
-                  className="btc-icon-btn small"
-                  onClick={() => moveEntry(i, 1)}
-                  disabled={i === data.timeline.length - 1}
-                  title="Move later"
-                >
-                  <ArrowDown size={12} />
-                </button>
-              </div>
+          <div className="btc-linked-cases-label">Precedent timeline (oldest to newest)</div>
+          {data.timeline.map((t) => (
+            <div className="btc-linked-case-row" key={t.id}>
               <input
                 className="btc-linked-input year"
                 placeholder="Year"
                 value={t.year}
-                onChange={(e) => updateEntry(t.id, { ...t, year: e.target.value })}
+                onChange={(e) => updateTimeline(t.id, { ...t, year: e.target.value })}
               />
               <input
                 className="btc-linked-input name"
                 placeholder="Case name"
                 value={t.caseName}
-                onChange={(e) => updateEntry(t.id, { ...t, caseName: e.target.value })}
+                onChange={(e) => updateTimeline(t.id, { ...t, caseName: e.target.value })}
               />
               <input
                 className="btc-linked-input cite"
                 placeholder="Citation"
                 value={t.citation}
-                onChange={(e) => updateEntry(t.id, { ...t, citation: e.target.value })}
+                onChange={(e) => updateTimeline(t.id, { ...t, citation: e.target.value })}
               />
               <input
                 className="btc-linked-input note"
-                placeholder="What changed / how it ruled"
+                placeholder="What changed / contribution"
                 value={t.development}
-                onChange={(e) => updateEntry(t.id, { ...t, development: e.target.value })}
+                onChange={(e) => updateTimeline(t.id, { ...t, development: e.target.value })}
               />
               <button
-                className="btc-icon-btn small"
-                onClick={() => removeEntry(t.id)}
-                title="Remove entry"
+                className="btc-icon-btn small danger"
+                onClick={() => removeTimeline(t.id)}
+                aria-label="Remove timeline entry"
               >
-                <Trash2 size={13} />
+                <X size={14} />
               </button>
             </div>
           ))}
-          <button className="btc-btn btc-btn-outline small" onClick={addEntry}>
-            <Plus size={13} /> Add to timeline
+          <button className="btc-btn btc-btn-outline small" onClick={addTimeline}>
+            <Plus size={13} /> Add precedent step
           </button>
         </div>
       </div>
@@ -1102,1886 +1021,544 @@ function EvolutionNoteCard({ index, data, onChange, onDelete, onOutline, onPrewr
   );
 }
 
-function ReadingNoteCard({ index, note, onChange, onDelete, onOutline, onPrewrite, flashId }) {
-  if (note.type === "concept") {
-    return (
-      <ConceptNoteCard
-        index={index}
-        data={note}
-        onChange={onChange}
-        onDelete={onDelete}
-        onOutline={onOutline}
-        onPrewrite={onPrewrite}
-        flashId={flashId}
-      />
-    );
-  }
-  if (note.type === "evolution") {
-    return (
-      <EvolutionNoteCard
-        index={index}
-        data={note}
-        onChange={onChange}
-        onDelete={onDelete}
-        onOutline={onOutline}
-        onPrewrite={onPrewrite}
-        flashId={flashId}
-      />
-    );
-  }
-  return (
-    <CaseBriefCard
-      index={index}
-      data={note}
-      onChange={onChange}
-      onDelete={onDelete}
-      onOutline={onOutline}
-      onPrewrite={onPrewrite}
-      flashId={flashId}
-    />
-  );
-}
-
-function AddNoteMenu({ onAdd }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  useEffect(() => {
-    const onClick = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, []);
-  return (
-    <div className="btc-addnote-wrap" ref={ref}>
-      <button className="btc-btn btc-btn-outline" onClick={() => setOpen((v) => !v)}>
-        <Plus size={15} /> Add note
-      </button>
-      {open && (
-        <div className="btc-addnote-menu">
-          {NOTE_TYPE_INFO.map((info) => (
-            <button
-              key={info.type}
-              className="btc-addnote-option"
-              onClick={() => {
-                onAdd(info.type);
-                setOpen(false);
-              }}
-            >
-              <span className="btc-addnote-option-title">{info.label}</span>
-              <span className="btc-addnote-option-desc">{info.desc}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+function NoteCard(props) {
+  const { data } = props;
+  if (data.type === "concept") return <ConceptNoteCard {...props} />;
+  if (data.type === "evolution") return <EvolutionNoteCard {...props} />;
+  return <CaseBriefCard {...props} />;
 }
 
 /* ------------------------------------------------------------------ */
-/*  Week view (Reading Notes / Lecture Notes)                           */
+/*  Main Views: Weeks, Outline, Prewrites                             */
 /* ------------------------------------------------------------------ */
-
-function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCourse, showToast, flashId }) {
-  const week = course.weeks[weekNum - 1];
-
-  const updateNote = (noteId, next) => {
-    updateWeek(weekNum, {
-      ...week,
-      readingNotes: week.readingNotes.map((n) => (n.id === noteId ? next : n)),
-    });
-  };
+function WeekView({ week, onUpdateWeek, onSendToOutline, onSendToPrewrite, showToast }) {
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [flashId, setFlashId] = useState(null);
 
   const addNote = (type) => {
-    const info = NOTE_TYPE_INFO.find((i) => i.type === type);
-    if (!info) return;
-    updateWeek(weekNum, { ...week, readingNotes: [...week.readingNotes, info.make()] });
-  };
-
-  const deleteNote = (noteId) => {
-    updateWeek(weekNum, {
+    const typeInfo = NOTE_TYPE_INFO.find((t) => t.type === type) || NOTE_TYPE_INFO[0];
+    const newNote = typeInfo.make();
+    onUpdateWeek({
       ...week,
-      readingNotes: week.readingNotes.filter((n) => n.id !== noteId),
+      readingNotes: [...week.readingNotes, newNote],
     });
+    setAddMenuOpen(false);
+    setFlashId(newNote.id);
+    setTimeout(() => setFlashId(null), 1500);
   };
 
-  const updateLecture = (field, value) => {
-    updateWeek(weekNum, { ...week, lecture: { ...week.lecture, [field]: value } });
+  const updateNote = (idx, next) => {
+    const updated = [...week.readingNotes];
+    updated[idx] = next;
+    onUpdateWeek({ ...week, readingNotes: updated });
   };
 
-  const addNoteToOutline = (note) => {
-    const content = compileNoteContent(note);
-    if (!content) {
-      showToast("Add some content before sending this to the outline");
-      return;
-    }
-    const existing = course.outline.find((s) => s.noteTag === note.id);
-    let nextOutline;
-    if (existing) {
-      const merged = { ...existing, content: `${existing.content}\n\n${content}`.trim() };
-      nextOutline = course.outline.map((s) => (s.id === existing.id ? merged : s));
-    } else {
-      const title =
-        note.type === "brief" ? note.caseName || "Untitled case" : note.title || "Untitled";
-      nextOutline = [...course.outline, makeOutlineSection({ title, content, noteTag: note.id })];
-    }
-    updateCourse({ ...course, outline: nextOutline });
-    showToast("Added to course outline");
-  };
-
-  const sendNoteToPrewrite = (note) => {
-    if (!noteHasContent(note)) {
-      showToast("Add some content before sending this to prewrites");
-      return;
-    }
-    const prewrite = buildPrewriteFromNote(note);
-    updateCourse({ ...course, prewrites: [...course.prewrites, prewrite] });
-    showToast("Sent to exam prewrites");
+  const deleteNote = (idx) => {
+    const updated = week.readingNotes.filter((_, i) => i !== idx);
+    onUpdateWeek({ ...week, readingNotes: updated });
   };
 
   return (
     <div className="btc-week-view">
-      <div className="btc-week-heading btc-heading-row">
-        <div>
-          <span className="btc-week-eyebrow">{course.name}</span>
-          <h1 className="btc-h1">Week {weekNum}</h1>
-        </div>
+      <div className="btc-week-header">
+        <h2>Week {week.weekNum}</h2>
         <DownloadMenu
-          label="Download week"
-          baseName={`${course.name} — Week ${weekNum}`}
+          label="Export Week"
+          baseName={`Week-${week.weekNum}`}
           buildBlocks={() => weekToBlocks(week)}
           showToast={showToast}
         />
       </div>
 
-      <div className="btc-tabs">
-        <button
-          className={`btc-tab${weekTab === "reading" ? " active" : ""}`}
-          onClick={() => setWeekTab("reading")}
-        >
-          Reading notes
-        </button>
-        <button
-          className={`btc-tab${weekTab === "lecture" ? " active" : ""}`}
-          onClick={() => setWeekTab("lecture")}
-        >
-          Lecture notes
-        </button>
-      </div>
-
-      {weekTab === "reading" ? (
-        <div className="btc-tab-panel">
-          {week.readingNotes.length === 0 && (
-            <div className="btc-empty-panel">
-              <p>No reading notes for this week yet.</p>
-              <p className="btc-empty-sub">
-                Choose a case brief for a single case, a concept note to gather several
-                cases under one doctrine, or an evolution-of-law note to trace how a rule
-                changed over time.
-              </p>
-            </div>
-          )}
-          <div className="btc-case-list">
-            {week.readingNotes.map((n, i) => (
-              <ReadingNoteCard
-                key={n.id}
-                index={i}
-                note={n}
-                flashId={flashId}
-                onChange={(next) => updateNote(n.id, next)}
-                onDelete={() => deleteNote(n.id)}
-                onOutline={() => addNoteToOutline(n)}
-                onPrewrite={() => sendNoteToPrewrite(n)}
-              />
-            ))}
-          </div>
-          <AddNoteMenu onAdd={addNote} />
-        </div>
-      ) : (
-        <div className="btc-tab-panel" id={`lecture-${course.id}-${weekNum}`}>
-          <div className={`btc-lecture-block${flashId === `lecture-${weekNum}` ? " btc-flash" : ""}`}>
-            <Field label="Class discussion">
-              <TextArea
-                rows={6}
-                placeholder="What came up in class — hypotheticals, cold calls, points raised..."
-                value={week.lecture.discussion}
-                onChange={(e) => updateLecture("discussion", e.target.value)}
-              />
-            </Field>
-            <Field label="Professor's emphasis">
-              <TextArea
-                rows={5}
-                placeholder="What the professor flagged as important or exam-relevant..."
-                value={week.lecture.emphasis}
-                onChange={(e) => updateLecture("emphasis", e.target.value)}
-              />
-            </Field>
-            <Field label="Key rules clarified">
-              <TextArea
-                rows={5}
-                placeholder="Rules the professor restated, narrowed, or corrected..."
-                value={week.lecture.keyRules}
-                onChange={(e) => updateLecture("keyRules", e.target.value)}
-              />
-            </Field>
+      <div className="btc-section-block">
+        <div className="btc-section-header">
+          <h3>Reading Notes</h3>
+          <div className="btc-relative">
+            <button className="btc-btn btc-btn-primary small" onClick={() => setAddMenuOpen((v) => !v)}>
+              <Plus size={14} /> Add Note
+            </button>
+            {addMenuOpen && (
+              <div className="btc-dropdown-menu">
+                {NOTE_TYPE_INFO.map((info) => (
+                  <button key={info.type} onClick={() => addNote(info.type)}>
+                    <strong>{info.label}</strong>
+                    <span>{info.desc}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
-      )}
-    </div>
-  );
-}
 
-/* ------------------------------------------------------------------ */
-/*  Synthesis: Course Outline                                           */
-/* ------------------------------------------------------------------ */
-
-function OutlineSectionCard({ section, onChange, onDelete, flashId }) {
-  const [mode, setMode] = useState("edit");
-  const isFlash = flashId === section.id;
-  return (
-    <div
-      id={`outline-${section.id}`}
-      className={`btc-outline-section${isFlash ? " btc-flash" : ""}`}
-    >
-      <div className="btc-outline-section-head">
-        <input
-          className="btc-outline-title-input"
-          placeholder="Section title (e.g., Negligence — Duty of Care)"
-          value={section.title}
-          onChange={(e) => onChange({ ...section, title: e.target.value })}
-        />
-        <div className="btc-outline-section-actions">
-          <button
-            className="btc-icon-btn"
-            title={mode === "edit" ? "Preview" : "Edit"}
-            onClick={() => setMode(mode === "edit" ? "preview" : "edit")}
-          >
-            {mode === "edit" ? <Eye size={15} /> : <FileEdit size={15} />}
-          </button>
-          <button className="btc-icon-btn" title="Delete section" onClick={onDelete}>
-            <Trash2 size={15} />
-          </button>
-        </div>
-      </div>
-      {mode === "edit" ? (
-        <TextArea
-          rows={8}
-          className="btc-textarea btc-outline-textarea"
-          placeholder="Synthesize the rule, its elements, exceptions, and the cases that shape it..."
-          value={section.content}
-          onChange={(e) => onChange({ ...section, content: e.target.value })}
-        />
-      ) : (
-        <div
-          className="btc-md-preview"
-          dangerouslySetInnerHTML={{ __html: renderMdLite(section.content) }}
-        />
-      )}
-    </div>
-  );
-}
-
-function OutlineView({ course, updateCourse, flashId, setFlashId, showToast }) {
-  const outline = course.outline;
-
-  const setOutline = (next) => updateCourse({ ...course, outline: next });
-
-  const addCustomSection = () => {
-    const sec = makeOutlineSection({ title: "" });
-    setOutline([...outline, sec]);
-    setTimeout(() => scrollToOutline(sec.id), 50);
-  };
-
-  const buildFromWeek = (weekNum) => {
-    const week = course.weeks[weekNum - 1];
-    const compiled = compileWeekContent(week);
-    const existing = outline.find((s) => s.weekTag === weekNum);
-    if (existing) {
-      const merged = { ...existing, content: `${existing.content}\n\n${compiled}`.trim() };
-      setOutline(outline.map((s) => (s.id === existing.id ? merged : s)));
-      setFlashId(existing.id);
-      setTimeout(() => scrollToOutline(existing.id), 50);
-    } else {
-      const sec = makeOutlineSection({
-        title: `Week ${weekNum}`,
-        content: compiled,
-        weekTag: weekNum,
-      });
-      setOutline([...outline, sec]);
-      setFlashId(sec.id);
-      setTimeout(() => scrollToOutline(sec.id), 50);
-    }
-    setTimeout(() => setFlashId(null), 1600);
-  };
-
-  const scrollToOutline = (id) => {
-    const el = document.getElementById(`outline-${id}`);
-    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-
-  return (
-    <div className="btc-synth-view">
-      <div className="btc-week-heading btc-heading-row">
-        <div>
-          <span className="btc-week-eyebrow">{course.name}</span>
-          <h1 className="btc-h1">Course outline</h1>
-          <p className="btc-lede">
-            A living draft that grows with every week. Pull a week's notes in as you
-            finish it, then shape the language into your own rule statements.
-          </p>
-        </div>
-        <DownloadMenu
-          label="Download outline"
-          baseName={`${course.name} — Course Outline`}
-          buildBlocks={() => outlineToBlocks(course)}
-          showToast={showToast}
-        />
-      </div>
-
-      <div className="btc-build-row">
-        <span className="btc-build-label">
-          <Sparkles size={13} /> Add a week's notes to the outline
-        </span>
-        <div className="btc-week-chips">
-          {course.weeks.map((w) => {
-            const has = weekHasContent(w);
-            return (
-              <button
-                key={w.weekNum}
-                className={`btc-chip${has ? " has-content" : ""}`}
-                disabled={!has}
-                title={has ? `Add Week ${w.weekNum} to outline` : "No notes yet this week"}
-                onClick={() => buildFromWeek(w.weekNum)}
-              >
-                {w.weekNum}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="btc-outline-layout">
-        <aside className="btc-toc">
-          <div className="btc-toc-title">
-            <ListTree size={14} /> Contents
+        {week.readingNotes.length === 0 ? (
+          <div className="btc-empty-card">
+            <p>No reading notes added for Week {week.weekNum} yet.</p>
           </div>
-          {outline.length === 0 && <p className="btc-toc-empty">No sections yet.</p>}
-          <ul className="btc-toc-list">
-            {outline.map((s, i) => (
-              <li key={s.id}>
-                <button className="btc-toc-link" onClick={() => scrollToOutline(s.id)}>
-                  <span className="btc-toc-num">{i + 1}</span>
-                  {s.title.trim() || "Untitled section"}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </aside>
-
-        <div className="btc-outline-sections">
-          {outline.map((s) => (
-            <OutlineSectionCard
-              key={s.id}
-              section={s}
+        ) : (
+          week.readingNotes.map((note, i) => (
+            <NoteCard
+              key={note.id}
+              index={i}
+              data={note}
               flashId={flashId}
-              onChange={(next) => setOutline(outline.map((o) => (o.id === s.id ? next : o)))}
-              onDelete={() => setOutline(outline.filter((o) => o.id !== s.id))}
+              onChange={(next) => updateNote(i, next)}
+              onDelete={() => deleteNote(i)}
+              onOutline={() => onSendToOutline(week.weekNum, note)}
+              onPrewrite={() => onSendToPrewrite(note)}
             />
-          ))}
-          <button className="btc-btn btc-btn-outline" onClick={addCustomSection}>
-            <Plus size={15} /> Add section
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Synthesis: Exam Prewrites                                           */
-/* ------------------------------------------------------------------ */
-
-function PrewriteCard({ item, onChange, onDelete, flashId }) {
-  const [mode, setMode] = useState("edit");
-  const isFlash = flashId === item.id;
-  return (
-    <div
-      id={`prewrite-${item.id}`}
-      className={`btc-outline-section${isFlash ? " btc-flash" : ""}`}
-    >
-      <div className="btc-outline-section-head">
-        <input
-          className="btc-outline-title-input"
-          placeholder="Attack outline title (e.g., Negligence — Duty &amp; Breach)"
-          value={item.title}
-          onChange={(e) => onChange({ ...item, title: e.target.value })}
-        />
-        <div className="btc-outline-section-actions">
-          <button
-            className="btc-icon-btn"
-            title="Insert IRAC/CRAC skeleton"
-            onClick={() =>
-              onChange({
-                ...item,
-                content: `${item.content}${item.content.trim() ? "\n\n" : ""}${iracTemplate()}`,
-              })
-            }
-          >
-            <FileEdit size={15} />
-          </button>
-          <button
-            className="btc-icon-btn"
-            title={mode === "edit" ? "Preview" : "Edit"}
-            onClick={() => setMode(mode === "edit" ? "preview" : "edit")}
-          >
-            {mode === "edit" ? <Eye size={15} /> : <Pencil size={15} />}
-          </button>
-          <button className="btc-icon-btn" title="Delete" onClick={onDelete}>
-            <Trash2 size={15} />
-          </button>
-        </div>
-      </div>
-      {mode === "edit" ? (
-        <TextArea
-          rows={10}
-          className="btc-textarea btc-outline-textarea"
-          placeholder="Build a modular IRAC/CRAC block. Use the skeleton button for bracketed fact-pattern placeholders."
-          value={item.content}
-          onChange={(e) => onChange({ ...item, content: e.target.value })}
-        />
-      ) : (
-        <div
-          className="btc-md-preview"
-          dangerouslySetInnerHTML={{ __html: renderMdLite(item.content) }}
-        />
-      )}
-    </div>
-  );
-}
-
-function PrewritesView({ course, updateCourse, flashId, setFlashId, showToast }) {
-  const prewrites = course.prewrites;
-  const setPrewrites = (next) => updateCourse({ ...course, prewrites: next });
-
-  const addBlank = () => {
-    const p = makePrewrite();
-    setPrewrites([...prewrites, p]);
-  };
-
-  const addFromTemplate = () => {
-    const p = makePrewrite({ title: "Untitled attack outline", content: iracTemplate() });
-    setPrewrites([...prewrites, p]);
-  };
-
-  return (
-    <div className="btc-synth-view">
-      <div className="btc-week-heading btc-heading-row">
-        <div>
-          <span className="btc-week-eyebrow">{course.name}</span>
-          <h1 className="btc-h1">Exam prewrites</h1>
-          <p className="btc-lede">
-            Modular IRAC/CRAC attack outlines, ready to drop a fact pattern into. Bracketed
-            placeholders mark where exam facts go.
-          </p>
-        </div>
-        <DownloadMenu
-          label="Download prewrites"
-          baseName={`${course.name} — Exam Prewrites`}
-          buildBlocks={() => prewritesToBlocks(course)}
-          showToast={showToast}
-        />
-      </div>
-
-      <div className="btc-prewrite-actions">
-        <button className="btc-btn btc-btn-outline" onClick={addBlank}>
-          <Plus size={15} /> New prewrite
-        </button>
-        <button className="btc-btn btc-btn-primary" onClick={addFromTemplate}>
-          <FileEdit size={15} /> New from IRAC skeleton
-        </button>
-      </div>
-
-      {prewrites.length === 0 && (
-        <div className="btc-empty-panel">
-          <p>No prewrites yet.</p>
-          <p className="btc-empty-sub">
-            Start from the IRAC skeleton, then tailor each element and rule statement to
-            the doctrine you're prewriting.
-          </p>
-        </div>
-      )}
-
-      <div className="btc-outline-sections btc-prewrites-list">
-        {prewrites.map((p) => (
-          <PrewriteCard
-            key={p.id}
-            item={p}
-            flashId={flashId}
-            onChange={(next) => setPrewrites(prewrites.map((x) => (x.id === p.id ? next : x)))}
-            onDelete={() => setPrewrites(prewrites.filter((x) => x.id !== p.id))}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Global search                                                       */
-/* ------------------------------------------------------------------ */
-
-function buildSearchIndex(courses) {
-  const items = [];
-  courses.forEach((course) => {
-    course.weeks.forEach((week) => {
-      week.readingNotes.forEach((note) => {
-        let typeLabel = "Case brief";
-        let title = "";
-        let snippet = "";
-        let text = "";
-        if (note.type === "concept") {
-          typeLabel = "Concept note";
-          const casesText = (note.cases || [])
-            .map((c) => `${c.caseName} ${c.citation} ${c.note}`)
-            .join(" ");
-          text = [note.title, note.summary, casesText].filter(Boolean).join(" ");
-          title = note.title || "Untitled concept";
-          snippet = note.summary || "";
-        } else if (note.type === "evolution") {
-          typeLabel = "Evolution of law";
-          const tlText = (note.timeline || [])
-            .map((t) => `${t.caseName} ${t.citation} ${t.year} ${t.development}`)
-            .join(" ");
-          text = [note.title, note.currentRule, tlText].filter(Boolean).join(" ");
-          title = note.title || "Untitled doctrine";
-          snippet = note.currentRule || "";
-        } else {
-          text = [note.caseName, note.citation, note.facts, note.procHistory, note.issue, note.holding, note.reasoning]
-            .filter(Boolean)
-            .join(" ");
-          title = note.caseName || "Untitled case";
-          snippet = note.holding || note.facts || note.issue || "";
-        }
-        if (text.trim()) {
-          items.push({
-            id: `note-${note.id}`,
-            type: typeLabel,
-            courseId: course.id,
-            courseName: course.name,
-            weekNum: week.weekNum,
-            weekTab: "reading",
-            title,
-            snippet,
-            text: text.toLowerCase(),
-            targetId: note.id,
-          });
-        }
-      });
-      const lectureText = [week.lecture.discussion, week.lecture.emphasis, week.lecture.keyRules]
-        .filter(Boolean)
-        .join(" ");
-      if (lectureText.trim()) {
-        items.push({
-          id: `lecture-${course.id}-${week.weekNum}`,
-          type: "Lecture note",
-          courseId: course.id,
-          courseName: course.name,
-          weekNum: week.weekNum,
-          weekTab: "lecture",
-          title: `Week ${week.weekNum} lecture`,
-          snippet: week.lecture.keyRules || week.lecture.emphasis || week.lecture.discussion,
-          text: lectureText.toLowerCase(),
-          targetId: `lecture-${week.weekNum}`,
-        });
-      }
-    });
-    course.outline.forEach((s) => {
-      const text = `${s.title} ${s.content}`;
-      if (text.trim()) {
-        items.push({
-          id: `outline-${s.id}`,
-          type: "Outline section",
-          courseId: course.id,
-          courseName: course.name,
-          view: "outline",
-          title: s.title || "Untitled section",
-          snippet: s.content,
-          text: text.toLowerCase(),
-          targetId: s.id,
-        });
-      }
-    });
-    course.prewrites.forEach((p) => {
-      const text = `${p.title} ${p.content}`;
-      if (text.trim()) {
-        items.push({
-          id: `prewrite-${p.id}`,
-          type: "Exam prewrite",
-          courseId: course.id,
-          courseName: course.name,
-          view: "prewrites",
-          title: p.title || "Untitled prewrite",
-          snippet: p.content,
-          text: text.toLowerCase(),
-          targetId: p.id,
-        });
-      }
-    });
-  });
-  return items;
-}
-
-function GlobalSearch({ courses, onNavigate }) {
-  const [query, setQuery] = useState("");
-  const [open, setOpen] = useState(false);
-  const index = useMemo(() => buildSearchIndex(courses), [courses]);
-  const results = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return [];
-    return index.filter((item) => item.text.includes(q)).slice(0, 25);
-  }, [query, index]);
-
-  const wrapRef = useRef(null);
-  useEffect(() => {
-    const onClick = (e) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, []);
-
-  return (
-    <div className="btc-search-wrap" ref={wrapRef}>
-      <div className="btc-search-box">
-        <Search size={15} className="btc-search-icon" />
-        <input
-          className="btc-search-input"
-          placeholder="Search cases, doctrines, rules, terms across every course..."
-          value={query}
-          onFocus={() => setOpen(true)}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setOpen(true);
-          }}
-        />
-        {query && (
-          <button
-            className="btc-search-clear"
-            onClick={() => {
-              setQuery("");
-              setOpen(false);
-            }}
-            aria-label="Clear search"
-          >
-            <X size={13} />
-          </button>
+          ))
         )}
       </div>
-      {open && query.trim() && (
-        <div className="btc-search-results">
-          {results.length === 0 ? (
-            <div className="btc-search-empty">No matches for "{query}".</div>
-          ) : (
-            results.map((r) => (
-              <button
-                key={r.id}
-                className="btc-search-result"
-                onClick={() => {
-                  onNavigate(r);
-                  setOpen(false);
-                  setQuery("");
-                }}
-              >
-                <div className="btc-search-result-top">
-                  <span className="btc-search-result-type">{r.type}</span>
-                  <span className="btc-search-result-loc">
-                    {r.courseName}
-                    {r.weekNum ? ` · Week ${r.weekNum}` : ""}
-                  </span>
-                </div>
-                <div className="btc-search-result-title">{r.title}</div>
-                {r.snippet && (
-                  <div className="btc-search-result-snippet">
-                    {r.snippet.slice(0, 120)}
-                    {r.snippet.length > 120 ? "…" : ""}
-                  </div>
-                )}
-              </button>
-            ))
-          )}
+
+      <div className="btc-section-block">
+        <div className="btc-section-header">
+          <h3>Lecture Notes</h3>
         </div>
-      )}
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Course switcher                                                     */
-/* ------------------------------------------------------------------ */
-
-function CourseSwitcher({ courses, currentId, onSelect, onCreate, onRename, onDelete }) {
-  const [open, setOpen] = useState(false);
-  const [newName, setNewName] = useState("");
-  const ref = useRef(null);
-  const current = courses.find((c) => c.id === currentId);
-
-  useEffect(() => {
-    const onClick = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, []);
-
-  return (
-    <div className="btc-course-switch" ref={ref}>
-      <button className="btc-course-switch-btn" onClick={() => setOpen(!open)}>
-        <span className="btc-course-switch-label">{current ? current.name : "Select course"}</span>
-        <ChevronDown size={14} />
-      </button>
-      {open && (
-        <div className="btc-course-popover">
-          <div className="btc-course-popover-list">
-            {courses.map((c) => (
-              <div
-                key={c.id}
-                className={`btc-course-popover-item${c.id === currentId ? " active" : ""}`}
-              >
-                <button
-                  className="btc-course-popover-name"
-                  onClick={() => {
-                    onSelect(c.id);
-                    setOpen(false);
-                  }}
-                >
-                  {c.name}
-                </button>
-                <button
-                  className="btc-icon-btn small"
-                  title="Delete course"
-                  onClick={() => {
-                    onDelete(c.id);
-                    setOpen(false);
-                  }}
-                >
-                  <Trash2 size={13} />
-                </button>
-              </div>
-            ))}
-          </div>
-          <div className="btc-course-popover-new">
-            <input
-              className="btc-input"
-              placeholder="New course name..."
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && newName.trim()) {
-                  onCreate(newName.trim());
-                  setNewName("");
-                  setOpen(false);
-                }
-              }}
+        <div className="btc-card">
+          <Field label="Key Rules & Definitions">
+            <TextArea
+              rows={3}
+              placeholder="What core rules did the professor emphasize today?"
+              value={week.lecture.keyRules}
+              onChange={(e) =>
+                onUpdateWeek({
+                  ...week,
+                  lecture: { ...week.lecture, keyRules: e.target.value },
+                })
+              }
             />
-            <button
-              className="btc-btn btc-btn-primary small"
-              disabled={!newName.trim()}
-              onClick={() => {
-                if (!newName.trim()) return;
-                onCreate(newName.trim());
-                setNewName("");
-                setOpen(false);
-              }}
-            >
-              <Plus size={13} /> Add
-            </button>
-          </div>
+          </Field>
+          <Field label="Professor's Specific Emphasis">
+            <TextArea
+              rows={3}
+              placeholder="Prof's pet peeves, preferred test/standard, or exam tips..."
+              value={week.lecture.emphasis}
+              onChange={(e) =>
+                onUpdateWeek({
+                  ...week,
+                  lecture: { ...week.lecture, emphasis: e.target.value },
+                })
+              }
+            />
+          </Field>
+          <Field label="Class Discussion & Hypos">
+            <TextArea
+              rows={4}
+              placeholder="Hypotheticals analyzed in class and key takeaway points..."
+              value={week.lecture.discussion}
+              onChange={(e) =>
+                onUpdateWeek({
+                  ...week,
+                  lecture: { ...week.lecture, discussion: e.target.value },
+                })
+              }
+            />
+          </Field>
         </div>
-      )}
+      </div>
     </div>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Sidebar                                                              */
-/* ------------------------------------------------------------------ */
-
-function Sidebar({ course, nav, setNav, mobileOpen, closeMobile }) {
-  const goWeek = (weekNum) => {
-    setNav((n) => ({ ...n, view: "week", weekNum }));
-    closeMobile();
+function OutlineView({ course, onUpdateCourse, showToast }) {
+  const addSection = () => {
+    const sec = makeOutlineSection({ title: "New Section" });
+    onUpdateCourse({ ...course, outline: [...course.outline, sec] });
   };
-  const goSynth = (synthTab) => {
-    setNav((n) => ({ ...n, view: "synthesis", synthTab }));
-    closeMobile();
-  };
 
-  return (
-    <nav className={`btc-sidebar${mobileOpen ? " open" : ""}`}>
-      <div className="btc-sidebar-section-label">Weeks</div>
-      <ul className="btc-week-nav">
-        {course.weeks.map((w) => {
-          const has = weekHasContent(w);
-          const active = nav.view === "week" && nav.weekNum === w.weekNum;
-          return (
-            <li key={w.weekNum}>
-              <button
-                className={`btc-week-item${active ? " active" : ""}`}
-                onClick={() => goWeek(w.weekNum)}
-              >
-                <span className="btc-week-item-num">{String(w.weekNum).padStart(2, "0")}</span>
-                <span className="btc-week-item-text">Week {w.weekNum}</span>
-                {has && <span className="btc-week-dot" aria-hidden="true" />}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-
-      <div className="btc-sidebar-divider" />
-
-      <div className="btc-sidebar-section-label">Synthesis &amp; exam suite</div>
-      <ul className="btc-week-nav">
-        <li>
-          <button
-            className={`btc-week-item${
-              nav.view === "synthesis" && nav.synthTab === "outline" ? " active" : ""
-            }`}
-            onClick={() => goSynth("outline")}
-          >
-            <BookOpen size={14} className="btc-week-item-icon" />
-            <span className="btc-week-item-text">Course outline</span>
-          </button>
-        </li>
-        <li>
-          <button
-            className={`btc-week-item${
-              nav.view === "synthesis" && nav.synthTab === "prewrites" ? " active" : ""
-            }`}
-            onClick={() => goSynth("prewrites")}
-          >
-            <FileEdit size={14} className="btc-week-item-icon" />
-            <span className="btc-week-item-text">Exam prewrites</span>
-          </button>
-        </li>
-      </ul>
-    </nav>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Onboarding / empty state                                            */
-/* ------------------------------------------------------------------ */
-
-function ConfirmDialog({ course, onCancel, onConfirm }) {
-  if (!course) return null;
-  return (
-    <div className="btc-modal-scrim" onMouseDown={onCancel}>
-      <div className="btc-modal" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="btc-modal-icon">
-          <AlertTriangle size={18} />
-        </div>
-        <h2 className="btc-modal-title">Delete "{course.name}"?</h2>
-        <p className="btc-modal-body">
-          This permanently removes all twelve weeks of reading and lecture notes, the
-          course outline, and every exam prewrite for this course. This can't be undone.
-        </p>
-        <div className="btc-modal-actions">
-          <button className="btc-btn btc-btn-outline" onClick={onCancel}>
-            Cancel
-          </button>
-          <button className="btc-btn btc-btn-danger" onClick={onConfirm}>
-            <Trash2 size={14} /> Delete course
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function BackupMenu({ onExport, onImportClick }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  useEffect(() => {
-    const onClick = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, []);
-  return (
-    <div className="btc-download-wrap" ref={ref}>
-      <button className="btc-btn btc-btn-outline small" onClick={() => setOpen((v) => !v)}>
-        <ShieldCheck size={13} /> Backup
-      </button>
-      {open && (
-        <div className="btc-download-menu">
-          <button
-            className="btc-download-option"
-            onClick={() => {
-              setOpen(false);
-              onExport();
-            }}
-          >
-            <Download size={14} /> Export notes (.json)
-          </button>
-          <button
-            className="btc-download-option"
-            onClick={() => {
-              setOpen(false);
-              onImportClick();
-            }}
-          >
-            <Upload size={14} /> Import notes (.json)
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ImportConfirmDialog({ pending, onCancel, onConfirm }) {
-  if (!pending) return null;
-  const courseCount = pending.courses.length;
-  const weekCount = pending.courses.reduce(
-    (sum, c) => sum + c.weeks.filter(weekHasContent).length,
-    0
-  );
-  return (
-    <div className="btc-modal-scrim" onMouseDown={onCancel}>
-      <div className="btc-modal" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="btc-modal-icon">
-          <Upload size={18} />
-        </div>
-        <h2 className="btc-modal-title">Restore this backup?</h2>
-        <p className="btc-modal-body">
-          This file contains {courseCount} course{courseCount === 1 ? "" : "s"} with{" "}
-          {weekCount} week{weekCount === 1 ? "" : "s"} of notes. Restoring it will replace
-          everything currently in the app. Your current notes will be downloaded first as a
-          safety copy, just in case.
-        </p>
-        <div className="btc-modal-actions">
-          <button className="btc-btn btc-btn-outline" onClick={onCancel}>
-            Cancel
-          </button>
-          <button className="btc-btn btc-btn-primary" onClick={onConfirm}>
-            <Upload size={14} /> Restore backup
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Onboarding({ onCreate, onImportClick }) {
-  const [name, setName] = useState("");
-  return (
-    <div className="btc-onboarding">
-      <Scale size={28} className="btc-onboarding-icon" />
-      <h1 className="btc-onboarding-title">Beat the Curve</h1>
-      <p className="btc-onboarding-sub">
-        A twelve-week home for case briefs, lecture notes, and the outline you'll actually
-        bring into the exam room. Start by naming your first course.
-      </p>
-      <div className="btc-onboarding-form">
-        <input
-          className="btc-input"
-          placeholder="Course name (e.g., Torts)"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && name.trim()) onCreate(name.trim());
-          }}
-        />
-        <button
-          className="btc-btn btc-btn-primary"
-          disabled={!name.trim()}
-          onClick={() => name.trim() && onCreate(name.trim())}
-        >
-          <Plus size={15} /> Create course
-        </button>
-      </div>
-      <div className="btc-onboarding-chips">
-        {COMMON_COURSES.map((c) => (
-          <button key={c} className="btc-chip has-content" onClick={() => onCreate(c)}>
-            {c}
-          </button>
-        ))}
-      </div>
-      <button className="btc-onboarding-restore" onClick={onImportClick}>
-        <Upload size={13} /> Already have a backup? Import notes
-      </button>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Root app                                                             */
-/* ------------------------------------------------------------------ */
-
-const DEFAULT_DATA = { schemaVersion: SCHEMA_VERSION, courses: [] };
-
-export default function BeatTheCurve() {
-  const [data, setData] = useState(DEFAULT_DATA);
-  const [loaded, setLoaded] = useState(false);
-  const [saveState, setSaveState] = useState("idle"); // idle | saving | saved | error
-  const [nav, setNav] = useState({
-    courseId: null,
-    view: "week",
-    weekNum: 1,
-    weekTab: "reading",
-    synthTab: "outline",
-  });
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [flashId, setFlashId] = useState(null);
-  const [toast, setToast] = useState(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
-  const [pendingImport, setPendingImport] = useState(null);
-  const fileInputRef = useRef(null);
-
-  const showToast = useCallback((msg) => setToast(msg), []);
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), 1700);
-    return () => clearTimeout(t);
-  }, [toast]);
-
-  /* ---- load ---- */
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await window.storage.get(STORAGE_KEY);
-        if (!cancelled && res && res.value) {
-          const parsed = JSON.parse(res.value);
-          const hydrated = hydrateData(parsed);
-          setData(hydrated);
-          if (hydrated.courses.length) {
-            setNav((n) => ({ ...n, courseId: hydrated.courses[0].id }));
-          }
-        }
-      } catch (e) {
-        // no saved data yet — start fresh
-      } finally {
-        if (!cancelled) setLoaded(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  /* ---- save (debounced) ---- */
-  useEffect(() => {
-    if (!loaded) return;
-    setSaveState("saving");
-    const t = setTimeout(async () => {
-      try {
-        const res = await window.storage.set(STORAGE_KEY, JSON.stringify(data));
-        setSaveState(res ? "saved" : "error");
-      } catch (e) {
-        setSaveState("error");
-      }
-    }, 700);
-    return () => clearTimeout(t);
-  }, [data, loaded]);
-
-  /* ---- backup export / import ---- */
-  const handleExportBackup = useCallback(() => {
-    exportNotebookBackup(data, "backup");
-    showToast("Backup downloaded");
-  }, [data, showToast]);
-
-  const triggerImportPicker = useCallback(() => {
-    if (fileInputRef.current) fileInputRef.current.click();
-  }, []);
-
-  const handleImportFileChange = useCallback(
-    (e) => {
-      const file = e.target.files && e.target.files[0];
-      e.target.value = ""; // allow re-selecting the same file later
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        try {
-          const parsed = JSON.parse(reader.result);
-          if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.courses)) {
-            showToast("That file doesn't look like a Beat the Curve backup");
-            return;
-          }
-          setPendingImport(hydrateData(parsed));
-        } catch (err) {
-          showToast("Couldn't read that file — make sure it's a Beat the Curve .json backup");
-        }
-      };
-      reader.onerror = () => showToast("Couldn't read that file");
-      reader.readAsText(file);
-    },
-    [showToast]
-  );
-
-  const cancelImport = useCallback(() => setPendingImport(null), []);
-
-  const confirmImport = useCallback(() => {
-    if (!pendingImport) return;
-    // Safety net: capture whatever is currently in the app before overwriting it.
-    if (data.courses.length) exportNotebookBackup(data, "pre-import-safety-backup");
-    setData(pendingImport);
-    setNav({
-      courseId: pendingImport.courses.length ? pendingImport.courses[0].id : null,
-      view: "week",
-      weekNum: 1,
-      weekTab: "reading",
-      synthTab: "outline",
+  const updateSection = (id, next) => {
+    onUpdateCourse({
+      ...course,
+      outline: course.outline.map((s) => (s.id === id ? next : s)),
     });
-    setPendingImport(null);
-    showToast("Notes restored from backup");
-  }, [pendingImport, data, showToast]);
+  };
 
-  const currentCourse = useMemo(
-    () => data.courses.find((c) => c.id === nav.courseId) || null,
-    [data, nav.courseId]
+  const removeSection = (id) => {
+    onUpdateCourse({
+      ...course,
+      outline: course.outline.filter((s) => s.id !== id),
+    });
+  };
+
+  return (
+    <div className="btc-outline-view">
+      <div className="btc-week-header">
+        <h2>Course Outline</h2>
+        <div className="btc-actions-row">
+          <button className="btc-btn btc-btn-primary small" onClick={addSection}>
+            <Plus size={14} /> Add Section
+          </button>
+          <DownloadMenu
+            label="Export Outline"
+            baseName={`${course.name}-Outline`}
+            buildBlocks={() => outlineToBlocks(course)}
+            showToast={showToast}
+          />
+        </div>
+      </div>
+
+      {course.outline.length === 0 ? (
+        <div className="btc-empty-card">
+          <p>Your outline is currently empty. Add sections or push notes directly from weekly readings.</p>
+        </div>
+      ) : (
+        course.outline.map((sec) => (
+          <div key={sec.id} className="btc-card btc-outline-sec">
+            <div className="btc-outline-sec-header">
+              <input
+                className="btc-case-name-input"
+                value={sec.title}
+                onChange={(e) => updateSection(sec.id, { ...sec, title: e.target.value })}
+              />
+              <button className="btc-icon-btn danger" onClick={() => removeSection(sec.id)}>
+                <Trash2 size={14} />
+              </button>
+            </div>
+            <TextArea
+              rows={6}
+              value={sec.content}
+              onChange={(e) => updateSection(sec.id, { ...sec, content: e.target.value })}
+            />
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+function PrewritesView({ course, onUpdateCourse, showToast }) {
+  const addPrewrite = () => {
+    const p = makePrewrite({ title: "New Attack Outline", content: iracTemplate() });
+    onUpdateCourse({ ...course, prewrites: [...course.prewrites, p] });
+  };
+
+  const updatePrewrite = (id, next) => {
+    onUpdateCourse({
+      ...course,
+      prewrites: course.prewrites.map((p) => (p.id === id ? next : p)),
+    });
+  };
+
+  const removePrewrite = (id) => {
+    onUpdateCourse({
+      ...course,
+      prewrites: course.prewrites.filter((p) => p.id !== id),
+    });
+  };
+
+  return (
+    <div className="btc-prewrites-view">
+      <div className="btc-week-header">
+        <h2>Exam Prewrites & Attack Outlines</h2>
+        <div className="btc-actions-row">
+          <button className="btc-btn btc-btn-primary small" onClick={addPrewrite}>
+            <Plus size={14} /> New Prewrite
+          </button>
+          <DownloadMenu
+            label="Export Prewrites"
+            baseName={`${course.name}-Prewrites`}
+            buildBlocks={() => prewritesToBlocks(course)}
+            showToast={showToast}
+          />
+        </div>
+      </div>
+
+      {course.prewrites.length === 0 ? (
+        <div className="btc-empty-card">
+          <p>No attack templates created yet. Send notes here or create new ones for fast exam execution.</p>
+        </div>
+      ) : (
+        course.prewrites.map((p) => (
+          <div key={p.id} className="btc-card btc-prewrite-card">
+            <div className="btc-outline-sec-header">
+              <input
+                className="btc-case-name-input"
+                value={p.title}
+                onChange={(e) => updatePrewrite(p.id, { ...p, title: e.target.value })}
+              />
+              <button className="btc-icon-btn danger" onClick={() => removePrewrite(p.id)}>
+                <Trash2 size={14} />
+              </button>
+            </div>
+            <TextArea
+              rows={8}
+              value={p.content}
+              onChange={(e) => updatePrewrite(p.id, { ...p, content: e.target.value })}
+            />
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Main App Component                                                */
+/* ------------------------------------------------------------------ */
+export default function App() {
+  const [data, setData] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      return saved ? hydrateData(JSON.parse(saved)) : { schemaVersion: SCHEMA_VERSION, courses: [] };
+    } catch (e) {
+      return { schemaVersion: SCHEMA_VERSION, courses: [] };
+    }
+  });
+
+  const [activeCourseId, setActiveCourseId] = useState(null);
+  const [activeTab, setActiveTab] = useState("week-1");
+  const [newCourseName, setNewCourseName] = useState("");
+  const [toastMessage, setToastMessage] = useState(null);
+  const [saveStatus, setSaveStatus] = useState("saved");
+
+  // Save changes to LocalStorage safely
+  useEffect(() => {
+    try {
+      setSaveStatus("saving");
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      setSaveStatus("saved");
+    } catch (e) {
+      setSaveStatus("error");
+    }
+  }, [data]);
+
+  const showToast = (msg) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  const activeCourse = useMemo(
+    () => data.courses.find((c) => c.id === activeCourseId) || data.courses[0] || null,
+    [data.courses, activeCourseId]
   );
 
-  const courseToDelete = useMemo(
-    () => data.courses.find((c) => c.id === confirmDeleteId) || null,
-    [data, confirmDeleteId]
-  );
-
-  const updateCourse = useCallback(
-    (nextCourse) => {
-      setData((d) => ({
-        ...d,
-        courses: d.courses.map((c) => (c.id === nextCourse.id ? nextCourse : c)),
-      }));
-    },
-    []
-  );
-
-  const updateWeek = useCallback(
-    (weekNum, nextWeek) => {
-      if (!currentCourse) return;
-      updateCourse({
-        ...currentCourse,
-        weeks: currentCourse.weeks.map((w) => (w.weekNum === weekNum ? nextWeek : w)),
-      });
-    },
-    [currentCourse, updateCourse]
-  );
+  useEffect(() => {
+    if (activeCourse && (!activeCourseId || activeCourse.id !== activeCourseId)) {
+      setActiveCourseId(activeCourse.id);
+    }
+  }, [activeCourse, activeCourseId]);
 
   const createCourse = (name) => {
-    const course = makeCourse(name);
-    setData((d) => ({ ...d, courses: [...d.courses, course] }));
-    setNav({ courseId: course.id, view: "week", weekNum: 1, weekTab: "reading", synthTab: "outline" });
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const course = makeCourse(trimmed);
+    setData((prev) => ({ ...prev, courses: [...prev.courses, course] }));
+    setActiveCourseId(course.id);
+    setNewCourseName("");
+    showToast(`Created course: ${trimmed}`);
   };
 
-  const requestDeleteCourse = (id) => setConfirmDeleteId(id);
+  const updateCourse = (updated) => {
+    setData((prev) => ({
+      ...prev,
+      courses: prev.courses.map((c) => (c.id === updated.id ? updated : c)),
+    }));
+  };
 
-  const cancelDeleteCourse = () => setConfirmDeleteId(null);
+  const updateWeek = (weekNum, updatedWeek) => {
+    if (!activeCourse) return;
+    const weeks = activeCourse.weeks.map((w) => (w.weekNum === weekNum ? updatedWeek : w));
+    updateCourse({ ...activeCourse, weeks });
+  };
 
-  const performDeleteCourse = () => {
-    const id = confirmDeleteId;
-    if (!id) return;
-    const remaining = data.courses.filter((c) => c.id !== id);
-    setData((d) => ({ ...d, courses: d.courses.filter((c) => c.id !== id) }));
-    if (nav.courseId === id) {
-      setNav((n) => ({
-        ...n,
-        courseId: remaining.length ? remaining[0].id : null,
-        view: "week",
-        weekNum: 1,
-      }));
-    }
-    setConfirmDeleteId(null);
+  const deleteCourse = (id) => {
+    setData((prev) => ({ ...prev, courses: prev.courses.filter((c) => c.id !== id) }));
     showToast("Course deleted");
   };
 
-  const selectCourse = (id) => {
-    setNav((n) => ({ ...n, courseId: id }));
+  const handleSendToOutline = (weekNum, note) => {
+    if (!activeCourse) return;
+    const content = compileNoteContent(note);
+    const sec = makeOutlineSection({
+      title: note.caseName || note.title || `Week ${weekNum} Note`,
+      content,
+      weekTag: weekNum,
+      noteTag: note.id,
+    });
+    updateCourse({ ...activeCourse, outline: [...activeCourse.outline, sec] });
+    showToast("Sent to Course Outline");
   };
 
-  const handleSearchNavigate = (result) => {
-    setNav((n) => ({
-      ...n,
-      courseId: result.courseId,
-      view: result.view === "outline" || result.view === "prewrites" ? "synthesis" : "week",
-      weekNum: result.weekNum || n.weekNum,
-      weekTab: result.weekTab || n.weekTab,
-      synthTab: result.view === "prewrites" ? "prewrites" : "outline",
-    }));
-    setFlashId(result.targetId);
-    setTimeout(() => {
-      const el =
-        document.getElementById(`note-${result.targetId}`) ||
-        document.getElementById(`outline-${result.targetId}`) ||
-        document.getElementById(`prewrite-${result.targetId}`);
-      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-    }, 80);
-    setTimeout(() => setFlashId(null), 1800);
+  const handleSendToPrewrite = (note) => {
+    if (!activeCourse) return;
+    const prewrite = buildPrewriteFromNote(note);
+    updateCourse({ ...activeCourse, prewrites: [...activeCourse.prewrites, prewrite] });
+    showToast("Sent to Exam Prewrites");
   };
 
-  if (!loaded) {
+  const handleImport = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const parsed = JSON.parse(event.target.result);
+        const hydrated = hydrateData(parsed);
+        setData(hydrated);
+        showToast("Notebook imported successfully!");
+      } catch (err) {
+        showToast("Failed to parse JSON backup file");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  if (data.courses.length === 0) {
     return (
-      <div className="btc-root btc-loading-root">
-        <BaseStyles />
-        <Loader2 className="btc-spin" size={22} />
+      <div className="btc-app-container empty-state">
+        <div className="btc-hero">
+          <Scale size={48} className="btc-hero-icon" />
+          <h1>Beat the Curve</h1>
+          <p>
+            A twelve-week home for case briefs, lecture notes, and the outline you'll actually bring into the exam room.
+          </p>
+
+          <div className="btc-create-box">
+            <input
+              className="btc-input"
+              placeholder="Course name (e.g., Torts)"
+              value={newCourseName}
+              onChange={(e) => setNewCourseName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && createCourse(newCourseName)}
+            />
+            <button className="btc-btn btc-btn-primary" onClick={() => createCourse(newCourseName)}>
+              <Plus size={16} /> Create course
+            </button>
+          </div>
+
+          <div className="btc-quick-courses">
+            {COMMON_COURSES.map((name) => (
+              <button key={name} className="btc-chip" onClick={() => createCourse(name)}>
+                {name}
+              </button>
+            ))}
+          </div>
+
+          <div className="btc-import-row">
+            <label className="btc-link-btn">
+              <Upload size={14} /> Already have a backup? Import notes
+              <input type="file" accept=".json" onChange={handleImport} style={{ display: "none" }} />
+            </label>
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="btc-root">
-      <BaseStyles />
-
-      <header className="btc-header">
-        <div className="btc-header-left">
-          <button
-            className="btc-mobile-toggle"
-            onClick={() => setMobileOpen((v) => !v)}
-            aria-label="Toggle menu"
-          >
-            <Menu size={18} />
-          </button>
-          <div className="btc-wordmark">
-            <Scale size={17} />
-            <span>Beat the Curve</span>
-          </div>
+    <div className="btc-app-layout">
+      {/* Top Bar */}
+      <header className="btc-topbar">
+        <div className="btc-brand">
+          <Scale size={20} />
+          <span>Curve</span>
         </div>
 
-        <GlobalSearch courses={data.courses} onNavigate={handleSearchNavigate} />
+        <div className="btc-save-indicator">
+          {saveStatus === "saving" && <span className="btc-saving"><Loader2 size={12} className="spin" /> Saving...</span>}
+          {saveStatus === "saved" && <span className="btc-saved"><ShieldCheck size={12} /> Saved</span>}
+          {saveStatus === "error" && <span className="btc-error"><AlertTriangle size={12} /> Storage Error</span>}
+        </div>
 
-        <div className="btc-header-right">
-          <BackupMenu onExport={handleExportBackup} onImportClick={triggerImportPicker} />
-          <span className={`btc-save-indicator ${saveState}`}>
-            {saveState === "saving" && (
-              <>
-                <Loader2 size={12} className="btc-spin" /> Saving
-              </>
-            )}
-            {saveState === "saved" && (
-              <>
-                <Check size={12} /> Saved
-              </>
-            )}
-            {saveState === "error" && "Couldn't save"}
-          </span>
+        <div className="btc-top-actions">
+          <button className="btc-btn btc-btn-outline small" onClick={() => exportNotebookBackup(data)}>
+            <Download size={13} /> Backup
+          </button>
         </div>
       </header>
 
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".json,application/json"
-        style={{ display: "none" }}
-        onChange={handleImportFileChange}
-      />
+      <div className="btc-body">
+        {/* Sidebar */}
+        <aside className="btc-sidebar">
+          <div className="btc-sidebar-section">
+            <div className="btc-sidebar-title">COURSES</div>
+            {data.courses.map((c) => (
+              <div
+                key={c.id}
+                className={`btc-course-item ${c.id === activeCourse?.id ? "active" : ""}`}
+                onClick={() => setActiveCourseId(c.id)}
+              >
+                <span>{c.name}</span>
+                <button
+                  className="btc-icon-btn small danger"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteCourse(c.id);
+                  }}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
 
-      {!currentCourse ? (
-        <Onboarding onCreate={createCourse} onImportClick={triggerImportPicker} />
-      ) : (
-        <div className="btc-body">
-          <div className="btc-course-bar">
-            <CourseSwitcher
-              courses={data.courses}
-              currentId={currentCourse.id}
-              onSelect={selectCourse}
-              onCreate={createCourse}
-              onDelete={requestDeleteCourse}
-            />
-            <DownloadMenu
-              label="Download course"
-              baseName={`${currentCourse.name} — Full Course`}
-              buildBlocks={() => courseToBlocks(currentCourse)}
-              showToast={showToast}
-            />
+            <div className="btc-add-course-inline">
+              <input
+                className="btc-input small"
+                placeholder="New course..."
+                value={newCourseName}
+                onChange={(e) => setNewCourseName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && createCourse(newCourseName)}
+              />
+              <button className="btc-btn btc-btn-primary small" onClick={() => createCourse(newCourseName)}>
+                <Plus size={12} />
+              </button>
+            </div>
           </div>
 
-          <div className="btc-layout">
-            {mobileOpen && <div className="btc-mobile-scrim" onClick={() => setMobileOpen(false)} />}
-            <Sidebar
-              course={currentCourse}
-              nav={nav}
-              setNav={setNav}
-              mobileOpen={mobileOpen}
-              closeMobile={() => setMobileOpen(false)}
-            />
-            <main className="btc-main">
-              {nav.view === "week" ? (
+          {activeCourse && (
+            <div className="btc-sidebar-section">
+              <div className="btc-sidebar-title">NAVIGATION</div>
+              {Array.from({ length: WEEK_COUNT }, (_, i) => i + 1).map((w) => (
+                <button
+                  key={`week-${w}`}
+                  className={`btc-nav-item ${activeTab === `week-${w}` ? "active" : ""}`}
+                  onClick={() => setActiveTab(`week-${w}`)}
+                >
+                  Week {w}
+                </button>
+              ))}
+              <div className="btc-divider" />
+              <button
+                className={`btc-nav-item ${activeTab === "outline" ? "active" : ""}`}
+                onClick={() => setActiveTab("outline")}
+              >
+                Course Outline
+              </button>
+              <button
+                className={`btc-nav-item ${activeTab === "prewrites" ? "active" : ""}`}
+                onClick={() => setActiveTab("prewrites")}
+              >
+                Exam Prewrites
+              </button>
+            </div>
+          )}
+        </aside>
+
+        {/* Main Workspace */}
+        <main className="btc-content">
+          {activeCourse && (
+            <>
+              {activeTab.startsWith("week-") && (
                 <WeekView
-                  course={currentCourse}
-                  weekNum={nav.weekNum}
-                  weekTab={nav.weekTab}
-                  setWeekTab={(t) => setNav((n) => ({ ...n, weekTab: t }))}
-                  updateWeek={updateWeek}
-                  updateCourse={updateCourse}
-                  showToast={showToast}
-                  flashId={flashId}
-                />
-              ) : nav.synthTab === "outline" ? (
-                <OutlineView
-                  course={currentCourse}
-                  updateCourse={updateCourse}
-                  flashId={flashId}
-                  setFlashId={setFlashId}
-                  showToast={showToast}
-                />
-              ) : (
-                <PrewritesView
-                  course={currentCourse}
-                  updateCourse={updateCourse}
-                  flashId={flashId}
-                  setFlashId={setFlashId}
+                  week={activeCourse.weeks[parseInt(activeTab.replace("week-", ""), 10) - 1]}
+                  onUpdateWeek={(updated) => updateWeek(updated.weekNum, updated)}
+                  onSendToOutline={handleSendToOutline}
+                  onSendToPrewrite={handleSendToPrewrite}
                   showToast={showToast}
                 />
               )}
-            </main>
-          </div>
-        </div>
-      )}
-      {toast && <div className="btc-toast">{toast}</div>}
-      <ConfirmDialog
-        course={courseToDelete}
-        onCancel={cancelDeleteCourse}
-        onConfirm={performDeleteCourse}
-      />
-      <ImportConfirmDialog pending={pendingImport} onCancel={cancelImport} onConfirm={confirmImport} />
+              {activeTab === "outline" && (
+                <OutlineView course={activeCourse} onUpdateCourse={updateCourse} showToast={showToast} />
+              )}
+              {activeTab === "prewrites" && (
+                <PrewritesView course={activeCourse} onUpdateCourse={updateCourse} showToast={showToast} />
+              )}
+            </>
+          )}
+        </main>
+      </div>
+
+      {toastMessage && <div className="btc-toast">{toastMessage}</div>}
     </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Styles                                                               */
-/* ------------------------------------------------------------------ */
-
-function BaseStyles() {
-  return (
-    <style>{`
-      @import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;0,6..72,700;1,6..72,400;1,6..72,500&family=Inter:wght@400;500;600&display=swap');
-
-      .btc-root {
-        --paper: #F5F0E1;
-        --paper-raised: #FBF8EF;
-        --ink: #211D17;
-        --ink-soft: #4A4438;
-        --muted: #8A8172;
-        --rule: #DBD3BC;
-        --rule-strong: #C7BC9E;
-        --accent: #8C3230;
-        --accent-soft: #F1DDD4;
-        --spine: #1F3737;
-        --spine-soft: #E4E9E4;
-        font-family: 'Newsreader', Georgia, serif;
-        color: var(--ink);
-        background: var(--paper);
-        min-height: 100vh;
-        width: 100%;
-        display: flex;
-        flex-direction: column;
-        position: relative;
-      }
-      .btc-root * { box-sizing: border-box; }
-      .btc-root ::selection { background: var(--accent-soft); }
-      .btc-root button { font-family: 'Inter', sans-serif; cursor: pointer; }
-      .btc-root input, .btc-root textarea {
-        font-family: 'Newsreader', Georgia, serif;
-        color: var(--ink);
-      }
-      .btc-root button:focus-visible,
-      .btc-root input:focus-visible,
-      .btc-root textarea:focus-visible {
-        outline: 2px solid var(--spine);
-        outline-offset: 1px;
-      }
-      .btc-spin { animation: btc-spin 0.9s linear infinite; }
-      @keyframes btc-spin { to { transform: rotate(360deg); } }
-
-      .btc-loading-root { align-items: center; justify-content: center; color: var(--muted); }
-
-      /* ---------- Header ---------- */
-      .btc-header {
-        display: flex;
-        align-items: center;
-        gap: 20px;
-        padding: 12px 22px;
-        border-bottom: 1px solid var(--rule);
-        background: var(--paper-raised);
-        position: sticky;
-        top: 0;
-        z-index: 30;
-      }
-      .btc-header-left { display: flex; align-items: center; gap: 10px; }
-      .btc-mobile-toggle {
-        display: none;
-        background: none; border: none; color: var(--ink); padding: 4px;
-      }
-      .btc-wordmark {
-        display: flex; align-items: center; gap: 7px;
-        font-family: 'Newsreader', Georgia, serif;
-        font-weight: 600;
-        font-size: 1.15rem;
-        letter-spacing: -0.01em;
-        white-space: nowrap;
-        color: var(--ink);
-      }
-      .btc-header-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
-      .btc-save-indicator {
-        font-family: 'Inter', sans-serif;
-        font-size: 0.72rem;
-        color: var(--muted);
-        display: flex; align-items: center; gap: 5px;
-        min-width: 62px;
-      }
-      .btc-save-indicator.saved { color: #4C6B4C; }
-      .btc-save-indicator.error { color: var(--accent); }
-
-      /* ---------- Search ---------- */
-      .btc-search-wrap { position: relative; flex: 1; max-width: 560px; }
-      .btc-search-box {
-        display: flex; align-items: center; gap: 8px;
-        background: var(--paper);
-        border: 1px solid var(--rule-strong);
-        border-radius: 3px;
-        padding: 7px 10px;
-      }
-      .btc-search-icon { color: var(--muted); flex-shrink: 0; }
-      .btc-search-input {
-        border: none; background: transparent; outline: none;
-        font-size: 0.92rem; width: 100%; color: var(--ink);
-      }
-      .btc-search-input::placeholder { color: var(--muted); }
-      .btc-search-clear { background: none; border: none; color: var(--muted); padding: 2px; }
-      .btc-search-results {
-        position: absolute; top: calc(100% + 6px); left: 0; right: 0;
-        background: var(--paper-raised);
-        border: 1px solid var(--rule-strong);
-        border-radius: 3px;
-        box-shadow: 0 8px 24px rgba(33,29,23,0.12);
-        max-height: 420px; overflow-y: auto;
-        z-index: 40;
-      }
-      .btc-search-empty {
-        padding: 16px; font-family: 'Inter', sans-serif; font-size: 0.85rem; color: var(--muted);
-      }
-      .btc-search-result {
-        display: block; width: 100%; text-align: left;
-        padding: 10px 14px; background: none; border: none;
-        border-bottom: 1px solid var(--rule);
-      }
-      .btc-search-result:last-child { border-bottom: none; }
-      .btc-search-result:hover { background: var(--accent-soft); }
-      .btc-search-result-top {
-        display: flex; justify-content: space-between; gap: 10px;
-        font-family: 'Inter', sans-serif; font-size: 0.68rem; color: var(--muted);
-        margin-bottom: 3px;
-      }
-      .btc-search-result-title { font-weight: 600; font-size: 0.95rem; }
-      .btc-search-result-snippet { font-size: 0.8rem; color: var(--ink-soft); margin-top: 2px; }
-
-      /* ---------- Course bar & switcher ---------- */
-      .btc-course-bar {
-        padding: 10px 22px;
-        border-bottom: 1px solid var(--rule);
-        background: var(--paper);
-        display: flex; align-items: center; justify-content: space-between; gap: 12px;
-        flex-wrap: wrap;
-      }
-      .btc-course-switch { position: relative; display: inline-block; }
-      .btc-course-switch-btn {
-        display: flex; align-items: center; gap: 6px;
-        background: none; border: none;
-        font-family: 'Newsreader', Georgia, serif;
-        font-weight: 600; font-size: 1.3rem; letter-spacing: -0.01em;
-        color: var(--ink); padding: 2px 4px;
-      }
-      .btc-course-popover {
-        position: absolute; top: calc(100% + 8px); left: 0;
-        background: var(--paper-raised);
-        border: 1px solid var(--rule-strong);
-        border-radius: 3px;
-        min-width: 260px;
-        box-shadow: 0 10px 28px rgba(33,29,23,0.14);
-        z-index: 40;
-      }
-      .btc-course-popover-list { max-height: 260px; overflow-y: auto; }
-      .btc-course-popover-item {
-        display: flex; align-items: center; justify-content: space-between;
-        border-bottom: 1px solid var(--rule);
-      }
-      .btc-course-popover-item.active { background: var(--accent-soft); }
-      .btc-course-popover-name {
-        flex: 1; text-align: left; background: none; border: none;
-        padding: 9px 12px; font-size: 0.95rem; color: var(--ink);
-      }
-      .btc-course-popover-new {
-        display: flex; gap: 6px; padding: 10px; border-top: 1px solid var(--rule);
-      }
-
-      /* ---------- Body / layout ---------- */
-      .btc-body { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-      .btc-layout { flex: 1; display: flex; min-height: 0; }
-
-      .btc-sidebar {
-        width: 216px; flex-shrink: 0;
-        border-right: 1px solid var(--rule);
-        background: var(--paper-raised);
-        padding: 18px 12px 24px;
-        overflow-y: auto;
-      }
-      .btc-sidebar-section-label {
-        font-family: 'Inter', sans-serif;
-        font-size: 0.7rem;
-        color: var(--muted);
-        padding: 0 10px 8px;
-      }
-      .btc-sidebar-divider { height: 1px; background: var(--rule); margin: 14px 6px; }
-      .btc-week-nav { list-style: none; margin: 0; padding: 0; }
-      .btc-week-item {
-        width: 100%; display: flex; align-items: center; gap: 9px;
-        background: none; border: none; text-align: left;
-        padding: 7px 10px; border-radius: 3px;
-        font-family: 'Inter', sans-serif; font-size: 0.87rem;
-        color: var(--ink-soft);
-      }
-      .btc-week-item:hover { background: var(--rule); }
-      .btc-week-item.active {
-        background: var(--spine); color: #F5F0E1;
-      }
-      .btc-week-item-num {
-        font-family: 'Newsreader', Georgia, serif; font-size: 0.78rem; color: var(--muted);
-        width: 18px;
-      }
-      .btc-week-item.active .btc-week-item-num { color: #C9D6D6; }
-      .btc-week-item-icon { color: inherit; flex-shrink: 0; }
-      .btc-week-item-text { flex: 1; }
-      .btc-week-dot {
-        width: 5px; height: 5px; border-radius: 50%; background: var(--accent); flex-shrink: 0;
-      }
-      .btc-week-item.active .btc-week-dot { background: #E7B9B4; }
-
-      .btc-main {
-        flex: 1; min-width: 0; overflow-y: auto;
-        padding: 34px 40px 80px;
-      }
-
-      /* ---------- Headings ---------- */
-      .btc-week-heading { margin-bottom: 20px; max-width: 760px; }
-      .btc-week-eyebrow {
-        font-family: 'Inter', sans-serif; font-size: 0.72rem; color: var(--muted);
-      }
-      .btc-h1 {
-        font-family: 'Newsreader', Georgia, serif;
-        font-size: 2rem; font-weight: 600; letter-spacing: -0.015em;
-        margin: 2px 0 0;
-      }
-      .btc-lede { color: var(--ink-soft); font-size: 0.98rem; margin-top: 8px; max-width: 62ch; line-height: 1.5; }
-
-      /* ---------- Tabs ---------- */
-      .btc-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--rule); margin-bottom: 22px; }
-      .btc-tab {
-        background: none; border: none; padding: 9px 4px; margin-right: 20px;
-        font-family: 'Inter', sans-serif; font-size: 0.88rem; color: var(--muted);
-        border-bottom: 2px solid transparent; transform: translateY(1px);
-      }
-      .btc-tab.active { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
-      .btc-tab-panel { max-width: 760px; }
-
-      /* ---------- Fields ---------- */
-      .btc-field { margin-bottom: 14px; }
-      .btc-field-label {
-        display: block; font-family: 'Inter', sans-serif; font-size: 0.74rem;
-        color: var(--spine); margin-bottom: 5px; padding-left: 8px;
-        border-left: 2px solid var(--rule-strong);
-      }
-      .btc-textarea {
-        width: 100%; resize: vertical;
-        border: 1px solid var(--rule-strong); border-radius: 2px;
-        background: var(--paper-raised);
-        padding: 9px 11px; font-size: 0.96rem; line-height: 1.5;
-      }
-      .btc-textarea:focus { border-color: var(--spine); }
-      .btc-input {
-        border: 1px solid var(--rule-strong); border-radius: 2px;
-        background: var(--paper-raised); padding: 8px 10px;
-        font-size: 0.92rem; flex: 1;
-      }
-
-      /* ---------- Case cards ---------- */
-      .btc-empty-panel {
-        border: 1px dashed var(--rule-strong); border-radius: 3px;
-        padding: 22px; margin-bottom: 18px; color: var(--ink-soft);
-      }
-      .btc-empty-panel p { margin: 0 0 4px; }
-      .btc-empty-sub { font-size: 0.88rem; color: var(--muted); }
-      .btc-case-list { display: flex; flex-direction: column; gap: 18px; margin-bottom: 18px; }
-      .btc-case-card {
-        background: var(--paper-raised);
-        border: 1px solid var(--rule);
-        border-radius: 3px;
-        padding: 16px 18px 18px;
-        transition: box-shadow 0.4s ease;
-      }
-      .btc-case-header { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
-      .btc-case-index {
-        font-family: 'Inter', sans-serif; font-size: 0.72rem; color: var(--muted);
-        padding-top: 6px;
-      }
-      .btc-case-title-wrap { flex: 1; min-width: 0; }
-      .btc-case-name-input {
-        width: 100%; border: none; background: none; outline: none;
-        font-size: 1.15rem; font-weight: 600; color: var(--ink);
-        padding: 2px 0; border-bottom: 1px solid transparent;
-      }
-      .btc-case-name-input:focus { border-bottom-color: var(--rule-strong); }
-      .btc-case-citation-input {
-        width: 100%; border: none; background: none; outline: none;
-        font-style: italic; font-size: 0.84rem; color: var(--muted);
-        padding: 2px 0;
-      }
-      .btc-case-body { padding-left: 30px; }
-
-      .btc-note-badge {
-        display: inline-block; font-family: 'Inter', sans-serif; font-size: 0.68rem;
-        color: var(--muted); margin-bottom: 4px;
-      }
-      .btc-note-badge.concept { color: var(--spine); }
-      .btc-note-badge.evolution { color: var(--accent); }
-
-      .btc-note-actions { display: flex; gap: 2px; flex-shrink: 0; }
-
-      .btc-addnote-wrap { position: relative; display: inline-block; }
-      .btc-addnote-menu {
-        position: absolute; top: calc(100% + 6px); left: 0; z-index: 20;
-        background: var(--paper-raised); border: 1px solid var(--rule-strong);
-        border-radius: 3px; width: 320px;
-        box-shadow: 0 10px 28px rgba(33,29,23,0.14);
-      }
-      .btc-addnote-option {
-        display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-        width: 100%; text-align: left; background: none; border: none;
-        padding: 11px 14px; border-bottom: 1px solid var(--rule);
-      }
-      .btc-addnote-option:last-child { border-bottom: none; }
-      .btc-addnote-option:hover { background: var(--accent-soft); }
-      .btc-addnote-option-title { font-family: 'Newsreader', Georgia, serif; font-weight: 600; font-size: 0.95rem; }
-      .btc-addnote-option-desc { font-family: 'Inter', sans-serif; font-size: 0.76rem; color: var(--muted); line-height: 1.35; }
-
-      .btc-linked-cases { margin-top: 6px; }
-      .btc-linked-cases-label {
-        font-family: 'Inter', sans-serif; font-size: 0.74rem; color: var(--spine);
-        margin-bottom: 8px; padding-left: 8px; border-left: 2px solid var(--rule-strong);
-      }
-      .btc-linked-case-row, .btc-timeline-row {
-        display: flex; gap: 6px; align-items: center; margin-bottom: 6px; flex-wrap: wrap;
-      }
-      .btc-linked-input {
-        border: 1px solid var(--rule-strong); border-radius: 2px; background: var(--paper);
-        padding: 6px 8px; font-size: 0.86rem; min-width: 90px;
-      }
-      .btc-linked-input.name { flex: 1.3; }
-      .btc-linked-input.cite { flex: 0.9; }
-      .btc-linked-input.note { flex: 1.8; }
-      .btc-linked-input.year { flex: 0.4; min-width: 64px; }
-      .btc-timeline-reorder { display: flex; flex-direction: column; gap: 1px; flex-shrink: 0; }
-
-      .btc-current-rule-box {
-        border: 1px solid var(--rule-strong); background: var(--spine-soft);
-        border-radius: 3px; padding: 12px 14px; margin-bottom: 16px;
-      }
-      .btc-current-rule-box .btc-field-label { border-left-color: var(--spine); margin-bottom: 6px; }
-      .btc-current-rule-box .btc-textarea { background: var(--paper-raised); }
-
-      .btc-toast {
-        position: fixed; bottom: 22px; right: 22px; z-index: 50;
-        background: var(--spine); color: #F5F0E1; font-family: 'Inter', sans-serif;
-        font-size: 0.85rem; padding: 10px 16px; border-radius: 3px;
-        box-shadow: 0 8px 20px rgba(0,0,0,0.18);
-      }
-
-      /* ---------- Confirm modal ---------- */
-      .btc-modal-scrim {
-        position: fixed; inset: 0; background: rgba(33,29,23,0.45);
-        display: flex; align-items: center; justify-content: center;
-        z-index: 60; padding: 20px;
-      }
-      .btc-modal {
-        background: var(--paper-raised); border: 1px solid var(--rule-strong);
-        border-radius: 4px; padding: 26px 26px 20px; max-width: 420px; width: 100%;
-        box-shadow: 0 20px 48px rgba(0,0,0,0.22);
-      }
-      .btc-modal-icon {
-        width: 32px; height: 32px; border-radius: 50%;
-        background: var(--accent-soft); color: var(--accent);
-        display: flex; align-items: center; justify-content: center; margin-bottom: 12px;
-      }
-      .btc-modal-title { font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; letter-spacing: -0.01em; }
-      .btc-modal-body { color: var(--ink-soft); font-size: 0.92rem; line-height: 1.5; margin: 0 0 20px; }
-      .btc-modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
-      .btc-btn-danger {
-        background: var(--accent); color: #FBF2EF; border-color: var(--accent);
-      }
-      .btc-btn-danger:hover { background: #712523; }
-
-      /* ---------- Download menu ---------- */
-      .btc-download-wrap { position: relative; display: inline-block; }
-      .btc-download-menu {
-        position: absolute; top: calc(100% + 6px); right: 0; z-index: 20;
-        background: var(--paper-raised); border: 1px solid var(--rule-strong);
-        border-radius: 3px; min-width: 200px;
-        box-shadow: 0 10px 28px rgba(33,29,23,0.14);
-      }
-      .btc-download-option {
-        display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
-        background: none; border: none; padding: 10px 14px; font-family: 'Inter', sans-serif;
-        font-size: 0.85rem; color: var(--ink); border-bottom: 1px solid var(--rule);
-      }
-      .btc-download-option:last-child { border-bottom: none; }
-      .btc-download-option:hover { background: var(--accent-soft); }
-
-      .btc-heading-row {
-        display: flex; align-items: flex-start; justify-content: space-between;
-        gap: 16px; flex-wrap: wrap;
-      }
-
-      /* ---------- Lecture block ---------- */
-      .btc-lecture-block {
-        background: var(--paper-raised); border: 1px solid var(--rule);
-        border-radius: 3px; padding: 18px; transition: box-shadow 0.4s ease;
-      }
-
-      /* ---------- Buttons ---------- */
-      .btc-btn {
-        display: inline-flex; align-items: center; gap: 6px;
-        font-family: 'Inter', sans-serif; font-size: 0.85rem; font-weight: 500;
-        padding: 8px 14px; border-radius: 3px; border: 1px solid transparent;
-      }
-      .btc-btn.small { padding: 6px 10px; font-size: 0.8rem; }
-      .btc-btn-outline { background: none; border-color: var(--rule-strong); color: var(--ink); }
-      .btc-btn-outline:hover { background: var(--rule); }
-      .btc-btn-primary { background: var(--spine); color: #F5F0E1; }
-      .btc-btn-primary:hover { background: #16292A; }
-      .btc-btn-primary:disabled { opacity: 0.45; cursor: default; }
-      .btc-icon-btn {
-        background: none; border: none; color: var(--muted); padding: 5px; border-radius: 3px;
-      }
-      .btc-icon-btn:hover { background: var(--rule); color: var(--accent); }
-      .btc-icon-btn.small { padding: 3px; }
-
-      /* ---------- Synthesis / outline ---------- */
-      .btc-synth-view { max-width: 980px; }
-      .btc-build-row {
-        display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-        border: 1px solid var(--rule); background: var(--paper-raised);
-        border-radius: 3px; padding: 12px 16px; margin-bottom: 26px; max-width: 760px;
-      }
-      .btc-build-label {
-        display: flex; align-items: center; gap: 6px;
-        font-family: 'Inter', sans-serif; font-size: 0.8rem; color: var(--ink-soft);
-        white-space: nowrap;
-      }
-      .btc-week-chips { display: flex; gap: 6px; flex-wrap: wrap; }
-      .btc-chip {
-        width: 28px; height: 28px; border-radius: 50%;
-        border: 1px solid var(--rule-strong); background: var(--paper);
-        font-family: 'Inter', sans-serif; font-size: 0.78rem; color: var(--muted);
-      }
-      .btc-chip.has-content {
-        border-color: var(--spine); color: var(--spine); font-weight: 600;
-      }
-      .btc-chip:disabled { cursor: default; opacity: 0.5; }
-      .btc-chip.has-content:hover { background: var(--spine-soft); }
-
-      .btc-outline-layout { display: flex; gap: 34px; align-items: flex-start; }
-      .btc-toc {
-        width: 220px; flex-shrink: 0; position: sticky; top: 90px;
-        border-left: 1px solid var(--rule); padding-left: 16px;
-      }
-      .btc-toc-title {
-        display: flex; align-items: center; gap: 6px;
-        font-family: 'Inter', sans-serif; font-size: 0.74rem; color: var(--muted);
-        margin-bottom: 10px;
-      }
-      .btc-toc-empty { font-size: 0.82rem; color: var(--muted); }
-      .btc-toc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
-      .btc-toc-link {
-        display: flex; gap: 8px; align-items: baseline; width: 100%; text-align: left;
-        background: none; border: none; padding: 5px 6px; border-radius: 3px;
-        font-size: 0.85rem; color: var(--ink-soft);
-      }
-      .btc-toc-link:hover { background: var(--rule); color: var(--ink); }
-      .btc-toc-num { font-size: 0.7rem; color: var(--muted); flex-shrink: 0; }
-
-      .btc-outline-sections { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 20px; }
-      .btc-prewrites-list { max-width: 760px; }
-      .btc-outline-section {
-        background: var(--paper-raised); border: 1px solid var(--rule);
-        border-radius: 3px; padding: 16px 18px; scroll-margin-top: 90px;
-        transition: box-shadow 0.4s ease;
-      }
-      .btc-outline-section-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-      .btc-outline-title-input {
-        flex: 1; border: none; background: none; outline: none;
-        font-size: 1.1rem; font-weight: 600; color: var(--ink);
-        border-bottom: 1px solid transparent; padding-bottom: 2px;
-      }
-      .btc-outline-title-input:focus { border-bottom-color: var(--rule-strong); }
-      .btc-outline-section-actions { display: flex; gap: 2px; flex-shrink: 0; }
-      .btc-outline-textarea { font-size: 0.95rem; }
-      .btc-md-preview { font-size: 0.96rem; line-height: 1.6; }
-      .btc-md-preview h2 { font-size: 1.2rem; margin: 0 0 8px; }
-      .btc-md-preview h3 { font-size: 1.05rem; margin: 14px 0 6px; }
-      .btc-md-preview h4 { font-size: 0.95rem; margin: 10px 0 4px; color: var(--spine); }
-      .btc-md-preview p { margin: 0 0 8px; }
-      .btc-md-preview ul { margin: 0 0 8px; padding-left: 20px; }
-      .btc-md-preview code {
-        background: var(--rule); padding: 1px 5px; border-radius: 2px; font-size: 0.88em;
-      }
-      .btc-empty-preview { color: var(--muted); font-style: italic; }
-
-      .btc-prewrite-actions { display: flex; gap: 10px; margin-bottom: 20px; }
-
-      /* ---------- Flash highlight ---------- */
-      .btc-flash { box-shadow: 0 0 0 2px var(--accent); }
-
-      /* ---------- Onboarding ---------- */
-      .btc-onboarding {
-        flex: 1; display: flex; flex-direction: column; align-items: center;
-        justify-content: center; text-align: center; padding: 60px 24px;
-      }
-      .btc-onboarding-icon { color: var(--spine); margin-bottom: 14px; }
-      .btc-onboarding-title {
-        font-size: 2.3rem; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 10px;
-      }
-      .btc-onboarding-sub { max-width: 46ch; color: var(--ink-soft); line-height: 1.55; margin-bottom: 26px; }
-      .btc-onboarding-form { display: flex; gap: 8px; width: 100%; max-width: 400px; margin-bottom: 22px; }
-      .btc-onboarding-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 480px; }
-      .btc-onboarding-chips .btc-chip {
-        width: auto; height: auto; border-radius: 14px; padding: 6px 14px;
-      }
-      .btc-onboarding-restore {
-        display: inline-flex; align-items: center; gap: 6px; margin-top: 24px;
-        background: none; border: none; font-family: 'Inter', sans-serif;
-        font-size: 0.82rem; color: var(--spine); text-decoration: underline;
-        text-underline-offset: 3px;
-      }
-
-      /* ---------- Mobile ---------- */
-      .btc-mobile-scrim {
-        position: fixed; inset: 0; background: rgba(33,29,23,0.35); z-index: 20;
-      }
-      @media (max-width: 860px) {
-        .btc-mobile-toggle { display: inline-flex; }
-        .btc-search-wrap { display: none; }
-        .btc-sidebar {
-          position: fixed; top: 0; bottom: 0; left: 0; z-index: 25;
-          transform: translateX(-100%); transition: transform 0.25s ease;
-          box-shadow: 8px 0 24px rgba(0,0,0,0.15);
-        }
-        .btc-sidebar.open { transform: translateX(0); }
-        .btc-main { padding: 24px 18px 60px; }
-        .btc-case-body { padding-left: 0; }
-        .btc-outline-layout { flex-direction: column; }
-        .btc-toc { width: 100%; position: static; border-left: none; padding-left: 0; border-bottom: 1px solid var(--rule); padding-bottom: 12px; }
-      }
-    `}</style>
   );
 }
