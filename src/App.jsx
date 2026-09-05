@@ -24,6 +24,8 @@ import {
   AlertTriangle,
   Upload,
   ShieldCheck,
+  Cloud,
+  CloudOff,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
@@ -33,6 +35,27 @@ import {
 const WEEK_COUNT = 12;
 const STORAGE_KEY = "beat-the-curve-data-v1";
 const SCHEMA_VERSION = 1;
+
+/*
+ * Google Drive sync config.
+ * This Client ID is meant to be public — Google's browser (token) OAuth flow requires
+ * it to ship in front-end code, the same way it appears in any single-page app. It does
+ * NOT grant access by itself; every session still requires the signed-in user to approve
+ * the consent screen, and the drive.file scope below only ever lets this app see files
+ * it created itself — never the rest of the user's Drive.
+ *
+ * One-time setup in Google Cloud Console for this Client ID:
+ *  1. Enable the "Google Drive API" for the project.
+ *  2. Under "Authorized JavaScript origins", add your Vercel URL (and http://localhost:3000
+ *     or whichever port you dev on) — without this, the token request fails silently.
+ *  3. If the OAuth consent screen is still in "Testing" mode, add your own Google account
+ *     under "Test users" or publish the app.
+ */
+const GOOGLE_CLIENT_ID = "565952763033-16msfbpns5ec38nn93v0kb094k6hte62.apps.googleusercontent.com";
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+const DRIVE_FILE_NAME = "beat-the-curve-notebook.json";
+const DRIVE_FILE_ID_KEY = "beat-the-curve-drive-file-id";
+const DRIVE_WAS_CONNECTED_KEY = "beat-the-curve-drive-connected";
 
 const COMMON_COURSES = [
   "Torts",
@@ -685,6 +708,51 @@ function timestampForFilename() {
 function exportNotebookBackup(data, filenameTag = "backup") {
   const payload = JSON.stringify(data, null, 2);
   downloadBlob(`beat-the-curve-${filenameTag}-${timestampForFilename()}.json`, "application/json", payload);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Google Drive sync                                                   */
+/* ------------------------------------------------------------------ */
+
+function loadExternalScript(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) {
+      resolve();
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error(`Failed to load ${src}`));
+    document.head.appendChild(script);
+  });
+}
+
+// gapi.client.drive's generated methods accept a `media` option and handle the
+// multipart/media upload encoding internally, so files.create/files.update can be
+// called directly with the JSON payload as the body — no manual multipart needed.
+async function driveCreateFile(content) {
+  const res = await window.gapi.client.drive.files.create({
+    resource: { name: DRIVE_FILE_NAME, mimeType: "application/json" },
+    media: { mimeType: "application/json", body: content },
+    fields: "id",
+  });
+  return res.result;
+}
+
+async function driveUpdateFile(fileId, content) {
+  const res = await window.gapi.client.drive.files.update({
+    fileId,
+    media: { mimeType: "application/json", body: content },
+  });
+  return res.result;
+}
+
+async function driveReadFileContent(fileId) {
+  const res = await window.gapi.client.drive.files.get({ fileId, alt: "media" });
+  return typeof res.body === "string" ? res.body : JSON.stringify(res.result);
 }
 
 let jsPDFPromise = null;
@@ -1999,7 +2067,24 @@ function ConfirmDialog({ course, onCancel, onConfirm }) {
   );
 }
 
-function BackupMenu({ onExport, onImportClick }) {
+function driveStatusLabel(status) {
+  switch (status) {
+    case "connecting":
+      return "Connecting…";
+    case "connected":
+      return "Drive connected";
+    case "syncing":
+      return "Syncing to Drive…";
+    case "synced":
+      return "Synced to Drive";
+    case "error":
+      return "Drive sync failed";
+    default:
+      return "";
+  }
+}
+
+function BackupMenu({ onExport, onImportClick, driveStatus, driveFileId, onConnectDrive, onDisconnectDrive, onRestoreFromDrive }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -2009,6 +2094,7 @@ function BackupMenu({ onExport, onImportClick }) {
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
+  const driveConnected = driveStatus !== "disconnected";
   return (
     <div className="btc-download-wrap" ref={ref}>
       <button className="btc-btn btc-btn-outline small" onClick={() => setOpen((v) => !v)}>
@@ -2034,6 +2120,40 @@ function BackupMenu({ onExport, onImportClick }) {
           >
             <Upload size={14} /> Import notes (.json)
           </button>
+          <div className="btc-download-divider" />
+          {!driveConnected ? (
+            <button
+              className="btc-download-option"
+              onClick={() => {
+                setOpen(false);
+                onConnectDrive();
+              }}
+            >
+              <Cloud size={14} /> Connect Google Drive
+            </button>
+          ) : (
+            <>
+              <button
+                className="btc-download-option"
+                disabled={!driveFileId}
+                onClick={() => {
+                  setOpen(false);
+                  onRestoreFromDrive();
+                }}
+              >
+                <Cloud size={14} /> Restore from Drive
+              </button>
+              <button
+                className="btc-download-option"
+                onClick={() => {
+                  setOpen(false);
+                  onDisconnectDrive();
+                }}
+              >
+                <CloudOff size={14} /> Disconnect Drive
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -2139,6 +2259,19 @@ export default function BeatTheCurve() {
   const [pendingImport, setPendingImport] = useState(null);
   const fileInputRef = useRef(null);
 
+  // ---- Google Drive sync state ----
+  const [driveStatus, setDriveStatus] = useState("disconnected");
+  // disconnected | connecting | connected | syncing | synced | error
+  const [driveFileId, setDriveFileId] = useState(() => {
+    try {
+      return localStorage.getItem(DRIVE_FILE_ID_KEY) || null;
+    } catch (e) {
+      return null;
+    }
+  });
+  const tokenClientRef = useRef(null);
+  const syncToDriveRef = useRef(() => {});
+
   const showToast = useCallback((msg) => setToast(msg), []);
   useEffect(() => {
     if (!toast) return;
@@ -2146,45 +2279,162 @@ export default function BeatTheCurve() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  /* ---- load ---- */
+  /* ---- load from localStorage ---- */
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await window.storage.get(STORAGE_KEY);
-        if (!cancelled && res && res.value) {
-          const parsed = JSON.parse(res.value);
-          const hydrated = hydrateData(parsed);
-          setData(hydrated);
-          if (hydrated.courses.length) {
-            setNav((n) => ({ ...n, courseId: hydrated.courses[0].id }));
-          }
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const hydrated = hydrateData(parsed);
+        setData(hydrated);
+        if (hydrated.courses.length) {
+          setNav((n) => ({ ...n, courseId: hydrated.courses[0].id }));
         }
-      } catch (e) {
-        // no saved data yet — start fresh
-      } finally {
-        if (!cancelled) setLoaded(true);
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    } catch (e) {
+      // no saved data yet, or a corrupted entry — start fresh rather than crash
+    } finally {
+      setLoaded(true);
+    }
   }, []);
 
-  /* ---- save (debounced) ---- */
+  /* ---- save to localStorage (debounced) ---- */
   useEffect(() => {
     if (!loaded) return;
     setSaveState("saving");
-    const t = setTimeout(async () => {
+    const t = setTimeout(() => {
       try {
-        const res = await window.storage.set(STORAGE_KEY, JSON.stringify(data));
-        setSaveState(res ? "saved" : "error");
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        setSaveState("saved");
       } catch (e) {
         setSaveState("error");
       }
-    }, 700);
+    }, 500);
     return () => clearTimeout(t);
   }, [data, loaded]);
+
+  /* ---- Google Drive: sync current data to the connected Drive file ---- */
+  const syncToDrive = useCallback(async () => {
+    if (!["connected", "synced", "syncing", "error"].includes(driveStatus)) return;
+    setDriveStatus("syncing");
+    try {
+      const content = JSON.stringify(data);
+      if (driveFileId) {
+        await driveUpdateFile(driveFileId, content);
+      } else {
+        const file = await driveCreateFile(content);
+        setDriveFileId(file.id);
+        try {
+          localStorage.setItem(DRIVE_FILE_ID_KEY, file.id);
+        } catch (e) {}
+      }
+      setDriveStatus("synced");
+    } catch (e) {
+      setDriveStatus("error");
+    }
+  }, [data, driveFileId, driveStatus]);
+
+  useEffect(() => {
+    syncToDriveRef.current = syncToDrive;
+  }, [syncToDrive]);
+
+  /* ---- Google Drive: connect / disconnect ---- */
+  const requestDriveToken = useCallback(
+    ({ silent } = {}) => {
+      if (!window.google || !window.google.accounts || !window.google.accounts.oauth2) {
+        if (!silent) showToast("Google sign-in is still loading — try again in a moment");
+        return;
+      }
+      if (!silent) setDriveStatus("connecting");
+      if (!tokenClientRef.current) {
+        tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
+          client_id: GOOGLE_CLIENT_ID,
+          scope: DRIVE_SCOPE,
+          callback: (resp) => {
+            if (resp.error) {
+              setDriveStatus((s) => (s === "connecting" ? "disconnected" : s));
+              if (!silent) showToast("Google Drive connection was cancelled");
+              return;
+            }
+            window.gapi.client.setToken({ access_token: resp.access_token });
+            setDriveStatus("connected");
+            try {
+              localStorage.setItem(DRIVE_WAS_CONNECTED_KEY, "1");
+            } catch (e) {}
+            if (!silent) showToast("Google Drive connected");
+            syncToDriveRef.current();
+          },
+        });
+      }
+      tokenClientRef.current.requestAccessToken({ prompt: silent ? "" : "consent" });
+    },
+    [showToast]
+  );
+
+  const disconnectDrive = useCallback(() => {
+    const token = window.gapi && window.gapi.client && window.gapi.client.getToken();
+    if (token && window.google && window.google.accounts && window.google.accounts.oauth2) {
+      window.google.accounts.oauth2.revoke(token.access_token, () => {});
+    }
+    if (window.gapi && window.gapi.client) window.gapi.client.setToken(null);
+    setDriveStatus("disconnected");
+    try {
+      localStorage.removeItem(DRIVE_WAS_CONNECTED_KEY);
+    } catch (e) {}
+    showToast("Google Drive disconnected");
+  }, [showToast]);
+
+  const restoreFromDrive = useCallback(async () => {
+    if (!driveFileId) {
+      showToast("Connect Google Drive first");
+      return;
+    }
+    try {
+      const text = await driveReadFileContent(driveFileId);
+      const parsed = JSON.parse(text);
+      if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.courses)) {
+        showToast("The Drive backup looks empty or invalid");
+        return;
+      }
+      setPendingImport(hydrateData(parsed));
+    } catch (e) {
+      showToast("Couldn't read the Drive backup");
+    }
+  }, [driveFileId, showToast]);
+
+  /* ---- Google Drive: load the GIS + gapi scripts once on mount ---- */
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      loadExternalScript("https://accounts.google.com/gsi/client"),
+      loadExternalScript("https://apis.google.com/js/api.js"),
+    ])
+      .then(() => new Promise((resolve) => window.gapi.load("client", resolve)))
+      .then(() => window.gapi.client.load("drive", "v3"))
+      .then(() => {
+        if (cancelled) return;
+        let wasConnected = false;
+        try {
+          wasConnected = localStorage.getItem(DRIVE_WAS_CONNECTED_KEY) === "1";
+        } catch (e) {}
+        if (wasConnected) requestDriveToken({ silent: true });
+      })
+      .catch(() => {
+        if (!cancelled) showToast("Couldn't load Google Drive — check your connection");
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ---- Google Drive: auto-sync whenever data changes, once connected ---- */
+  useEffect(() => {
+    if (!loaded) return;
+    if (!["connected", "synced", "error"].includes(driveStatus)) return;
+    const t = setTimeout(() => syncToDriveRef.current(), 1200);
+    return () => clearTimeout(t);
+  }, [data, loaded, driveStatus]);
 
   /* ---- backup export / import ---- */
   const handleExportBackup = useCallback(() => {
@@ -2351,7 +2601,27 @@ export default function BeatTheCurve() {
         <GlobalSearch courses={data.courses} onNavigate={handleSearchNavigate} />
 
         <div className="btc-header-right">
-          <BackupMenu onExport={handleExportBackup} onImportClick={triggerImportPicker} />
+          <BackupMenu
+            onExport={handleExportBackup}
+            onImportClick={triggerImportPicker}
+            driveStatus={driveStatus}
+            driveFileId={driveFileId}
+            onConnectDrive={() => requestDriveToken()}
+            onDisconnectDrive={disconnectDrive}
+            onRestoreFromDrive={restoreFromDrive}
+          />
+          {driveStatus !== "disconnected" && (
+            <span className={`btc-drive-indicator ${driveStatus}`}>
+              {driveStatus === "syncing" || driveStatus === "connecting" ? (
+                <Loader2 size={12} className="btc-spin" />
+              ) : driveStatus === "error" ? (
+                <CloudOff size={12} />
+              ) : (
+                <Cloud size={12} />
+              )}
+              {driveStatusLabel(driveStatus)}
+            </span>
+          )}
           <span className={`btc-save-indicator ${saveState}`}>
             {saveState === "saving" && (
               <>
@@ -2533,6 +2803,13 @@ function BaseStyles() {
       }
       .btc-save-indicator.saved { color: #4C6B4C; }
       .btc-save-indicator.error { color: var(--accent); }
+
+      .btc-drive-indicator {
+        font-family: 'Inter', sans-serif; font-size: 0.72rem; color: var(--muted);
+        display: flex; align-items: center; gap: 5px; white-space: nowrap;
+      }
+      .btc-drive-indicator.connected, .btc-drive-indicator.synced { color: #4C6B4C; }
+      .btc-drive-indicator.error { color: var(--accent); }
 
       /* ---------- Search ---------- */
       .btc-search-wrap { position: relative; flex: 1; max-width: 560px; }
@@ -2836,6 +3113,9 @@ function BaseStyles() {
       }
       .btc-download-option:last-child { border-bottom: none; }
       .btc-download-option:hover { background: var(--accent-soft); }
+      .btc-download-option:disabled { color: var(--muted); cursor: default; }
+      .btc-download-option:disabled:hover { background: none; }
+      .btc-download-divider { height: 1px; background: var(--rule); margin: 2px 0; }
 
       .btc-heading-row {
         display: flex; align-items: flex-start; justify-content: space-between;
