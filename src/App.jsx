@@ -26,6 +26,8 @@ import {
   ShieldCheck,
   Cloud,
   CloudOff,
+  ExternalLink,
+  RefreshCw,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
@@ -56,6 +58,9 @@ const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 const DRIVE_FILE_NAME = "beat-the-curve-notebook.json";
 const DRIVE_FILE_ID_KEY = "beat-the-curve-drive-file-id";
 const DRIVE_WAS_CONNECTED_KEY = "beat-the-curve-drive-connected";
+const DRIVE_ROOT_FOLDER_NAME = "Beat the Curve";
+const DRIVE_MAP_KEY = "beat-the-curve-drive-map";
+const DRIVE_SYNC_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 
 const COMMON_COURSES = [
   "Torts",
@@ -730,12 +735,66 @@ function loadExternalScript(src) {
   });
 }
 
-// gapi.client.drive's generated methods accept a `media` option and handle the
-// multipart/media upload encoding internally, so files.create/files.update can be
-// called directly with the JSON payload as the body — no manual multipart needed.
-async function driveCreateFile(content) {
+/* ---- Drive map: remembers which Drive folder/doc IDs belong to which
+   course/week, across sessions. Kept separate from the notebook data
+   itself since it's Drive bookkeeping, not course content. ---- */
+
+function loadDriveMap() {
+  try {
+    const raw = localStorage.getItem(DRIVE_MAP_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+  // One-time migration from the earlier flat single-file layout.
+  let legacyBackupId = null;
+  try {
+    legacyBackupId = localStorage.getItem(DRIVE_FILE_ID_KEY) || null;
+  } catch (e) {}
+  return { rootFolderId: null, backupFileId: legacyBackupId, backupMoved: false, courses: {} };
+}
+
+function saveDriveMap(map) {
+  try {
+    localStorage.setItem(DRIVE_MAP_KEY, JSON.stringify(map));
+  } catch (e) {}
+}
+
+async function driveItemExists(fileId) {
+  try {
+    const res = await window.gapi.client.drive.files.get({ fileId, fields: "id,trashed" });
+    return !!(res.result && !res.result.trashed);
+  } catch (e) {
+    return false;
+  }
+}
+
+async function driveCreateFolder(name, parentId) {
   const res = await window.gapi.client.drive.files.create({
-    resource: { name: DRIVE_FILE_NAME, mimeType: "application/json" },
+    resource: {
+      name,
+      mimeType: "application/vnd.google-apps.folder",
+      parents: parentId ? [parentId] : undefined,
+    },
+    fields: "id",
+  });
+  return res.result.id;
+}
+
+// Ensures a folder exists for the given cached id, verifying it's still there
+// (the user may have deleted it in Drive) and recreating it if not.
+async function ensureFolder(cachedId, name, parentId) {
+  if (cachedId && (await driveItemExists(cachedId))) return cachedId;
+  return driveCreateFolder(name, parentId);
+}
+
+// gapi.client.drive's generated methods accept a `media` option and handle the
+// multipart/media upload encoding internally — no manual multipart needed.
+async function driveCreateFile(content, parentId) {
+  const res = await window.gapi.client.drive.files.create({
+    resource: {
+      name: DRIVE_FILE_NAME,
+      mimeType: "application/json",
+      parents: parentId ? [parentId] : undefined,
+    },
     media: { mimeType: "application/json", body: content },
     fields: "id",
   });
@@ -753,6 +812,94 @@ async function driveUpdateFile(fileId, content) {
 async function driveReadFileContent(fileId) {
   const res = await window.gapi.client.drive.files.get({ fileId, alt: "media" });
   return typeof res.body === "string" ? res.body : JSON.stringify(res.result);
+}
+
+async function driveMoveToFolder(fileId, newParentId) {
+  return window.gapi.client.drive.files.update({
+    fileId,
+    addParents: newParentId,
+    removeParents: "root",
+    fields: "id,parents",
+  });
+}
+
+function buildSimpleHtmlDoc(title, bodyHtml) {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(
+    title
+  )}</title></head><body>${bodyHtml}</body></html>`;
+}
+
+// Drive converts uploaded HTML into a native Google Doc's content on create, and
+// re-converts (replacing the body) on update with fresh media — so a week's Doc
+// can be kept live just by re-uploading its compiled HTML each sync.
+async function driveCreateDoc(name, parentId, html) {
+  const res = await window.gapi.client.drive.files.create({
+    resource: {
+      name,
+      mimeType: "application/vnd.google-apps.document",
+      parents: parentId ? [parentId] : undefined,
+    },
+    media: { mimeType: "text/html", body: html },
+    fields: "id",
+  });
+  return res.result.id;
+}
+
+async function driveUpdateDoc(fileId, html) {
+  await window.gapi.client.drive.files.update({
+    fileId,
+    media: { mimeType: "text/html", body: html },
+  });
+}
+
+// Full sync pass: ensures "Beat the Curve" > "<Course>" > "Week N" docs all exist
+// and are current, plus a JSON backup file for reliable full-fidelity restore.
+// Returns the updated map so the caller can persist it and refresh the UI.
+async function runDriveSync(data, mapIn) {
+  const map = { ...mapIn, courses: { ...mapIn.courses } };
+
+  map.rootFolderId = await ensureFolder(map.rootFolderId, DRIVE_ROOT_FOLDER_NAME, null);
+
+  // One-time relocation of a backup file created before folders existed.
+  if (map.backupFileId && !map.backupMoved) {
+    try {
+      await driveMoveToFolder(map.backupFileId, map.rootFolderId);
+    } catch (e) {
+      // Not fatal — worst case the old backup file stays where it was.
+    }
+    map.backupMoved = true;
+  }
+
+  const backupContent = JSON.stringify(data);
+  if (map.backupFileId && (await driveItemExists(map.backupFileId))) {
+    await driveUpdateFile(map.backupFileId, backupContent);
+  } else {
+    const file = await driveCreateFile(backupContent, map.rootFolderId);
+    map.backupFileId = file.id;
+    map.backupMoved = true;
+  }
+
+  for (const course of data.courses) {
+    const existing = map.courses[course.id] || { folderId: null, weeks: {} };
+    const folderId = await ensureFolder(existing.folderId, course.name, map.rootFolderId);
+    const weeks = { ...existing.weeks };
+
+    for (const week of course.weeks) {
+      if (!weekHasContent(week)) continue;
+      const docName = `Week ${week.weekNum}`;
+      const html = buildSimpleHtmlDoc(`${course.name} — ${docName}`, blocksToHtml(weekToBlocks(week)));
+      const cachedDocId = weeks[week.weekNum];
+      if (cachedDocId && (await driveItemExists(cachedDocId))) {
+        await driveUpdateDoc(cachedDocId, html);
+      } else {
+        weeks[week.weekNum] = await driveCreateDoc(docName, folderId, html);
+      }
+    }
+
+    map.courses[course.id] = { folderId, weeks };
+  }
+
+  return map;
 }
 
 let jsPDFPromise = null;
@@ -2084,7 +2231,17 @@ function driveStatusLabel(status) {
   }
 }
 
-function BackupMenu({ onExport, onImportClick, driveStatus, driveFileId, onConnectDrive, onDisconnectDrive, onRestoreFromDrive }) {
+function BackupMenu({
+  onExport,
+  onImportClick,
+  driveStatus,
+  driveFileId,
+  driveRootFolderId,
+  onConnectDrive,
+  onDisconnectDrive,
+  onRestoreFromDrive,
+  onSyncNow,
+}) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -2133,6 +2290,26 @@ function BackupMenu({ onExport, onImportClick, driveStatus, driveFileId, onConne
             </button>
           ) : (
             <>
+              {driveRootFolderId && (
+                <button
+                  className="btc-download-option"
+                  onClick={() => {
+                    setOpen(false);
+                    window.open(`https://drive.google.com/drive/folders/${driveRootFolderId}`, "_blank", "noopener");
+                  }}
+                >
+                  <ExternalLink size={14} /> Open "Beat the Curve" in Drive
+                </button>
+              )}
+              <button
+                className="btc-download-option"
+                onClick={() => {
+                  setOpen(false);
+                  onSyncNow();
+                }}
+              >
+                <RefreshCw size={14} /> Sync now
+              </button>
               <button
                 className="btc-download-option"
                 disabled={!driveFileId}
@@ -2262,15 +2439,16 @@ export default function BeatTheCurve() {
   // ---- Google Drive sync state ----
   const [driveStatus, setDriveStatus] = useState("disconnected");
   // disconnected | connecting | connected | syncing | synced | error
-  const [driveFileId, setDriveFileId] = useState(() => {
-    try {
-      return localStorage.getItem(DRIVE_FILE_ID_KEY) || null;
-    } catch (e) {
-      return null;
-    }
-  });
+  const driveMapRef = useRef(loadDriveMap());
+  const [driveFileId, setDriveFileId] = useState(() => driveMapRef.current.backupFileId || null);
+  const [driveRootFolderId, setDriveRootFolderId] = useState(() => driveMapRef.current.rootFolderId || null);
+  const driveStatusRef = useRef(driveStatus);
   const tokenClientRef = useRef(null);
   const syncToDriveRef = useRef(() => {});
+
+  useEffect(() => {
+    driveStatusRef.current = driveStatus;
+  }, [driveStatus]);
 
   const showToast = useCallback((msg) => setToast(msg), []);
   useEffect(() => {
@@ -2313,26 +2491,21 @@ export default function BeatTheCurve() {
     return () => clearTimeout(t);
   }, [data, loaded]);
 
-  /* ---- Google Drive: sync current data to the connected Drive file ---- */
+  /* ---- Google Drive: sync current data into the Drive folder structure ---- */
   const syncToDrive = useCallback(async () => {
-    if (!["connected", "synced", "syncing", "error"].includes(driveStatus)) return;
+    if (!["connected", "synced", "syncing", "error"].includes(driveStatusRef.current)) return;
     setDriveStatus("syncing");
     try {
-      const content = JSON.stringify(data);
-      if (driveFileId) {
-        await driveUpdateFile(driveFileId, content);
-      } else {
-        const file = await driveCreateFile(content);
-        setDriveFileId(file.id);
-        try {
-          localStorage.setItem(DRIVE_FILE_ID_KEY, file.id);
-        } catch (e) {}
-      }
+      const updatedMap = await runDriveSync(data, driveMapRef.current);
+      driveMapRef.current = updatedMap;
+      saveDriveMap(updatedMap);
+      setDriveFileId(updatedMap.backupFileId || null);
+      setDriveRootFolderId(updatedMap.rootFolderId || null);
       setDriveStatus("synced");
     } catch (e) {
       setDriveStatus("error");
     }
-  }, [data, driveFileId, driveStatus]);
+  }, [data]);
 
   useEffect(() => {
     syncToDriveRef.current = syncToDrive;
@@ -2361,7 +2534,7 @@ export default function BeatTheCurve() {
             try {
               localStorage.setItem(DRIVE_WAS_CONNECTED_KEY, "1");
             } catch (e) {}
-            if (!silent) showToast("Google Drive connected");
+            if (!silent) showToast("Google Drive connected — organizing your folders…");
             syncToDriveRef.current();
           },
         });
@@ -2402,6 +2575,14 @@ export default function BeatTheCurve() {
     }
   }, [driveFileId, showToast]);
 
+  const syncNow = useCallback(() => {
+    if (!["connected", "synced", "error"].includes(driveStatusRef.current)) {
+      showToast("Connect Google Drive first");
+      return;
+    }
+    syncToDriveRef.current();
+  }, [showToast]);
+
   /* ---- Google Drive: load the GIS + gapi scripts once on mount ---- */
   useEffect(() => {
     let cancelled = false;
@@ -2428,13 +2609,20 @@ export default function BeatTheCurve() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ---- Google Drive: auto-sync whenever data changes, once connected ---- */
+  /* ---- Google Drive: sync on a fixed timer, not on every keystroke ----
+     This effect intentionally depends only on `loaded`, so it's set up once.
+     Status is read through a ref inside the interval callback instead of being
+     a dependency — otherwise syncToDrive's own connected→syncing→synced status
+     changes would re-trigger this effect and create a fast, flickering loop. */
   useEffect(() => {
     if (!loaded) return;
-    if (!["connected", "synced", "error"].includes(driveStatus)) return;
-    const t = setTimeout(() => syncToDriveRef.current(), 1200);
-    return () => clearTimeout(t);
-  }, [data, loaded, driveStatus]);
+    const interval = setInterval(() => {
+      if (["connected", "synced", "error"].includes(driveStatusRef.current)) {
+        syncToDriveRef.current();
+      }
+    }, DRIVE_SYNC_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [loaded]);
 
   /* ---- backup export / import ---- */
   const handleExportBackup = useCallback(() => {
@@ -2606,9 +2794,11 @@ export default function BeatTheCurve() {
             onImportClick={triggerImportPicker}
             driveStatus={driveStatus}
             driveFileId={driveFileId}
+            driveRootFolderId={driveRootFolderId}
             onConnectDrive={() => requestDriveToken()}
             onDisconnectDrive={disconnectDrive}
             onRestoreFromDrive={restoreFromDrive}
+            onSyncNow={syncNow}
           />
           {driveStatus !== "disconnected" && (
             <span className={`btc-drive-indicator ${driveStatus}`}>
