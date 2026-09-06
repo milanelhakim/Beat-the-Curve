@@ -3420,16 +3420,11 @@ function CourseSwitcher({ courses, currentId, onSelect, onCreate, onRename, onDe
   // start editing a different course routes through this first, so a rename
   // can never be silently discarded no matter how the popover gets dismissed.
   const commitEdit = useCallback(() => {
-    setEditingId((id) => {
-      if (id) {
-        setEditValue((val) => {
-          if (val.trim()) onRename(id, val.trim());
-          return val;
-        });
-      }
-      return null;
-    });
-  }, [onRename]);
+    if (editingId && editValue.trim()) {
+      onRename(editingId, editValue.trim());
+    }
+    setEditingId(null);
+  }, [editingId, editValue, onRename]);
 
   useEffect(() => {
     const onClick = (e) => {
