@@ -1427,7 +1427,7 @@ async function exportDoc({ blocks, baseName, format, showToast }) {
   }
 }
 
-function DownloadMenu({ label = "Download", buildBlocks, baseName, showToast }) {
+function DownloadMenu({ label = "Download", buildBlocks, baseName, showToast, iconOnly, title }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -1446,10 +1446,16 @@ function DownloadMenu({ label = "Download", buildBlocks, baseName, showToast }) 
   };
 
   return (
-    <div className="btc-download-wrap" ref={ref}>
-      <button className="btc-btn btc-btn-outline small" onClick={() => setOpen((v) => !v)}>
-        <Download size={13} /> {label}
-      </button>
+    <div className={`btc-download-wrap${iconOnly ? " btc-download-wrap-icon" : ""}`} ref={ref}>
+      {iconOnly ? (
+        <button className="btc-icon-btn" onClick={() => setOpen((v) => !v)} title={title || label}>
+          <Download size={14} />
+        </button>
+      ) : (
+        <button className="btc-btn btc-btn-outline small" onClick={() => setOpen((v) => !v)}>
+          <Download size={13} /> {label}
+        </button>
+      )}
       {open && (
         <div className="btc-download-menu">
           <button className="btc-download-option" onClick={() => handle("word")}>
@@ -2714,7 +2720,16 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
       <div className="btc-week-heading btc-heading-row">
         <div>
           <span className="btc-week-eyebrow">{course.name}</span>
-          <EditableWeekTitle week={week} onRename={renameWeek} />
+          <div className="btc-week-title-line">
+            <DownloadMenu
+              iconOnly
+              title="Download full week"
+              baseName={`${course.name} - ${weekLabel(week)}`}
+              buildBlocks={() => weekToBlocks(week)}
+              showToast={showToast}
+            />
+            <EditableWeekTitle week={week} onRename={renameWeek} />
+          </div>
         </div>
         <div className="btc-week-doc-group">
           <button className="btc-btn btc-btn-outline small" onClick={onOpenOutline}>
@@ -2727,42 +2742,41 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
             <ListTree size={13} /> Assignments
           </button>
         </div>
-        <div className="btc-week-download-group">
-          <DownloadMenu
-            label="Reading notes"
-            baseName={`${course.name} - ${weekLabel(week)} - Reading Notes`}
-            buildBlocks={() => weekReadingBlocks(course, week)}
-            showToast={showToast}
-          />
-          <DownloadMenu
-            label="Lecture notes"
-            baseName={`${course.name} - ${weekLabel(week)} - Lecture Notes`}
-            buildBlocks={() => weekLectureBlocks(course, week)}
-            showToast={showToast}
-          />
-          <DownloadMenu
-            label="Full week"
-            baseName={`${course.name} - ${weekLabel(week)}`}
-            buildBlocks={() => weekToBlocks(week)}
-            showToast={showToast}
-          />
-        </div>
       </div>
 
       <div className="btc-tabs">
         {tabOrder.map((key) => (
-          <button
-            key={key}
-            draggable
-            onDragStart={handleTabDragStart(key)}
-            onDragOver={handleTabDragOver}
-            onDrop={handleTabDrop(key)}
-            className={`btc-tab${weekTab === key ? " active" : ""}`}
-            onClick={() => setWeekTab(key)}
-            title="Drag to reorder"
-          >
-            {WEEK_TAB_LABELS[key]}
-          </button>
+          <span className="btc-tab-item" key={key}>
+            <button
+              draggable
+              onDragStart={handleTabDragStart(key)}
+              onDragOver={handleTabDragOver}
+              onDrop={handleTabDrop(key)}
+              className={`btc-tab${weekTab === key ? " active" : ""}`}
+              onClick={() => setWeekTab(key)}
+              title="Drag to reorder"
+            >
+              {WEEK_TAB_LABELS[key]}
+            </button>
+            {key === "reading" && (
+              <DownloadMenu
+                iconOnly
+                title="Download reading notes"
+                baseName={`${course.name} - ${weekLabel(week)} - Reading Notes`}
+                buildBlocks={() => weekReadingBlocks(course, week)}
+                showToast={showToast}
+              />
+            )}
+            {key === "lecture" && (
+              <DownloadMenu
+                iconOnly
+                title="Download lecture notes"
+                baseName={`${course.name} - ${weekLabel(week)} - Lecture Notes`}
+                buildBlocks={() => weekLectureBlocks(course, week)}
+                showToast={showToast}
+              />
+            )}
+          </span>
         ))}
         <div className="btc-split-controls">
           <button
@@ -5280,6 +5294,7 @@ function BaseStyles() {
 
       /* ---------- Download menu ---------- */
       .btc-download-wrap { position: relative; display: inline-block; }
+      .btc-download-wrap-icon .btc-download-menu { right: auto; left: 0; }
       .btc-download-menu {
         position: absolute; top: calc(100% + 6px); right: 0; z-index: 20;
         background: var(--paper-raised); border: 1px solid var(--rule-strong);
@@ -5505,8 +5520,9 @@ function BaseStyles() {
         letter-spacing: -0.015em; border: none; border-bottom: 1px solid var(--rule-strong);
         background: none; color: var(--ink); padding: 2px 0; min-width: 240px;
       }
-      .btc-week-download-group { display: flex; flex-wrap: wrap; gap: 6px; }
+      .btc-week-title-line { display: flex; align-items: center; gap: 8px; }
       .btc-week-doc-group { display: flex; flex-wrap: wrap; gap: 6px; }
+      .btc-tab-item { display: inline-flex; align-items: center; gap: 2px; }
       .btc-course-rename-input {
         flex: 1; border: none; border-bottom: 1px solid var(--rule-strong);
         background: none; padding: 9px 12px; font-size: 0.95rem; color: var(--ink);
