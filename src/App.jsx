@@ -3418,13 +3418,16 @@ function CourseSwitcher({ courses, currentId, onSelect, onCreate, onRename, onDe
   useEffect(() => {
     const onClick = (e) => {
       if (ref.current && !ref.current.contains(e.target)) {
+        if (editingId && editValue.trim()) {
+          onRename(editingId, editValue.trim());
+        }
         setOpen(false);
         setEditingId(null);
       }
     };
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
-  }, []);
+  }, [editingId, editValue, onRename]);
 
   const startEdit = (c) => {
     setEditingId(c.id);
