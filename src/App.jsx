@@ -57,7 +57,9 @@ const STORAGE_KEY = "beat-the-curve-data-v1";
 // v3: added week.readings (uploaded PDF references, stored in Drive — only the
 //     Drive fileId/name/uploadedAt live locally) and course.outlinePdf (a single
 //     PDF reference per course). Both additive, same safe-default hydration.
-const SCHEMA_VERSION = 3;
+// v4: added course.readingSchedulePdf (same shape as outlinePdf, separate
+//     document) and course.assignments (deadline tracker entries). Additive.
+const SCHEMA_VERSION = 4;
 
 /*
  * Google Drive config. Auth now goes through Supabase's Google OAuth (see
@@ -72,6 +74,20 @@ const DRIVE_MAP_KEY = "beat-the-curve-drive-map";
 const DRIVE_SYNC_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 const DARK_MODE_KEY = "beat-the-curve-dark-mode";
 const PANEL_WIDTH_KEY = "beat-the-curve-panel-width";
+const TAB_ORDER_KEY = "beat-the-curve-tab-order";
+const DEFAULT_TAB_ORDER = ["reading", "lecture", "files"];
+function loadTabOrder() {
+  try {
+    const raw = localStorage.getItem(TAB_ORDER_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr) && arr.length === 3 && DEFAULT_TAB_ORDER.every((k) => arr.includes(k))) {
+        return arr;
+      }
+    }
+  } catch (e) {}
+  return DEFAULT_TAB_ORDER;
+}
 
 const COMMON_COURSES = [
   "Torts",
@@ -103,6 +119,38 @@ function weekLabel(week) {
   return week.title && week.title.trim() ? `Week ${week.weekNum}: ${week.title.trim()}` : `Week ${week.weekNum}`;
 }
 
+// Whole calendar days between today and a "YYYY-MM-DD" due date (negative if past).
+function daysUntil(dueDate) {
+  if (!dueDate) return null;
+  const due = new Date(`${dueDate}T00:00:00`);
+  if (Number.isNaN(due.getTime())) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((due.getTime() - today.getTime()) / 86400000);
+}
+
+// green: 14+ days out. yellow: 7–13 days out. red: under 7 days out (or overdue).
+function deadlineColor(days) {
+  if (days == null) return "muted";
+  if (days < 7) return "red";
+  if (days <= 13) return "yellow";
+  return "green";
+}
+
+// The soonest not-yet-passed assignment across a course, for the header badge.
+function nextDeadline(course) {
+  if (!course) return null;
+  const upcoming = (course.assignments || [])
+    .map((a) => ({ ...a, days: daysUntil(a.dueDate) }))
+    .filter((a) => a.name.trim() && a.days != null && a.days >= 0)
+    .sort((a, b) => a.days - b.days);
+  return upcoming[0] || null;
+}
+
+function makeAssignment() {
+  return { id: uid("assign"), name: "", weight: "", dueDate: "" };
+}
+
 function makeCourse(name) {
   return {
     id: uid("course"),
@@ -112,6 +160,8 @@ function makeCourse(name) {
     outline: [],
     prewrites: [],
     outlinePdf: null, // single course-wide PDF reference: { fileId, name, uploadedAt }
+    readingSchedulePdf: null, // same shape, separate document
+    assignments: [], // { id, name, weight, dueDate }
   };
 }
 
@@ -279,12 +329,22 @@ function hydrateReadingFile(r) {
   };
 }
 
-function hydrateOutlinePdf(o) {
+function hydratePdfRef(o, defaultName) {
   if (!o || typeof o !== "object" || !o.fileId) return null;
   return {
     fileId: o.fileId,
-    name: typeof o.name === "string" && o.name.trim() ? o.name : "Course Outline.pdf",
+    name: typeof o.name === "string" && o.name.trim() ? o.name : defaultName,
     uploadedAt: typeof o.uploadedAt === "number" ? o.uploadedAt : Date.now(),
+  };
+}
+
+function hydrateAssignment(a) {
+  if (!a || typeof a !== "object") return null;
+  return {
+    id: a.id || uid("assign"),
+    name: typeof a.name === "string" ? a.name : "",
+    weight: typeof a.weight === "string" || typeof a.weight === "number" ? String(a.weight) : "",
+    dueDate: typeof a.dueDate === "string" ? a.dueDate : "",
   };
 }
 
@@ -334,7 +394,9 @@ function hydrateCourse(c) {
     weeks,
     outline: Array.isArray(c.outline) ? c.outline.map(hydrateOutlineSection) : [],
     prewrites: Array.isArray(c.prewrites) ? c.prewrites.map(hydratePrewrite) : [],
-    outlinePdf: hydrateOutlinePdf(c.outlinePdf),
+    outlinePdf: hydratePdfRef(c.outlinePdf, "Course Outline.pdf"),
+    readingSchedulePdf: hydratePdfRef(c.readingSchedulePdf, "Reading Schedule.pdf"),
+    assignments: Array.isArray(c.assignments) ? c.assignments.map(hydrateAssignment).filter(Boolean) : [],
   };
 }
 
@@ -2581,20 +2643,20 @@ function ReadingsPanel({ week, weekNum, driveStatus, onUpload, onDelete, onConne
   );
 }
 
-function CourseOutlineModal({ course, driveStatus, onUpload, onDelete, onConnectDrive, onClose }) {
+function CourseDocModal({ title, uploadPrompt, pdfRef, driveStatus, onUpload, onDelete, onConnectDrive, onClose }) {
   const fileInputRef = useRef(null);
   return (
     <div className="btc-modal-scrim btc-pdf-modal-scrim" onMouseDown={onClose}>
       <div className="btc-pdf-modal" onMouseDown={(e) => e.stopPropagation()}>
         <div className="btc-pdf-modal-head">
-          <h2 className="btc-modal-title">{course.name} — Course Outline</h2>
+          <h2 className="btc-modal-title">{title}</h2>
           <div className="btc-pdf-modal-actions">
-            {course.outlinePdf && driveStatus !== "disconnected" && (
+            {pdfRef && driveStatus !== "disconnected" && (
               <button className="btc-btn btc-btn-outline small" onClick={() => fileInputRef.current.click()}>
                 <Upload size={13} /> Replace
               </button>
             )}
-            {course.outlinePdf && (
+            {pdfRef && (
               <button className="btc-btn btc-btn-outline small" onClick={onDelete}>
                 <Trash2 size={13} /> Remove
               </button>
@@ -2619,19 +2681,19 @@ function CourseOutlineModal({ course, driveStatus, onUpload, onDelete, onConnect
           {driveStatus === "disconnected" ? (
             <div className="btc-drive-required">
               <Cloud size={22} />
-              <p>Connect Google Drive to upload and view the course outline.</p>
+              <p>Connect Google Drive to upload and view this document.</p>
               <button className="btc-btn btc-btn-primary" onClick={onConnectDrive}>
                 Connect Google Drive
               </button>
             </div>
-          ) : course.outlinePdf ? (
-            <PdfViewer fileId={course.outlinePdf.fileId} onMissing={onDelete} />
+          ) : pdfRef ? (
+            <PdfViewer fileId={pdfRef.fileId} onMissing={onDelete} />
           ) : (
             <div className="btc-pdf-upload-prompt">
               <FileText size={28} />
-              <p>No course outline uploaded yet.</p>
+              <p>Nothing uploaded yet.</p>
               <button className="btc-btn btc-btn-primary" onClick={() => fileInputRef.current.click()}>
-                <Upload size={14} /> Upload Course Outline Here
+                <Upload size={14} /> {uploadPrompt}
               </button>
             </div>
           )}
@@ -2641,10 +2703,105 @@ function CourseOutlineModal({ course, driveStatus, onUpload, onDelete, onConnect
   );
 }
 
+function AssignmentRow({ assignment, onChange, onDelete }) {
+  const days = daysUntil(assignment.dueDate);
+  const color = deadlineColor(days);
+  return (
+    <div className="btc-assignment-row">
+      <input
+        className="btc-assignment-input name"
+        placeholder="Assignment name"
+        value={assignment.name}
+        onChange={(e) => onChange({ ...assignment, name: e.target.value })}
+      />
+      <input
+        className="btc-assignment-input weight"
+        placeholder="Weight %"
+        inputMode="decimal"
+        value={assignment.weight}
+        onChange={(e) => onChange({ ...assignment, weight: e.target.value })}
+      />
+      <input
+        className="btc-assignment-input date"
+        type="date"
+        value={assignment.dueDate}
+        onChange={(e) => onChange({ ...assignment, dueDate: e.target.value })}
+      />
+      {assignment.dueDate && (
+        <span className={`btc-deadline-chip ${color}`}>
+          {days < 0 ? `${Math.abs(days)}d overdue` : days === 0 ? "Due today" : `${days}d left`}
+        </span>
+      )}
+      <button className="btc-icon-btn small" title="Remove assignment" onClick={onDelete}>
+        <Trash2 size={13} />
+      </button>
+    </div>
+  );
+}
+
+function AssignmentsModal({ course, onAdd, onUpdate, onDelete, onClose }) {
+  const sorted = [...course.assignments].sort((a, b) => {
+    const da = daysUntil(a.dueDate);
+    const db = daysUntil(b.dueDate);
+    if (da == null) return 1;
+    if (db == null) return -1;
+    return da - db;
+  });
+  return (
+    <div className="btc-modal-scrim btc-pdf-modal-scrim" onMouseDown={onClose}>
+      <div className="btc-pdf-modal btc-assignments-modal" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="btc-pdf-modal-head">
+          <h2 className="btc-modal-title">{course.name} — Assignments</h2>
+          <button className="btc-icon-btn" title="Close" onClick={onClose}>
+            <X size={16} />
+          </button>
+        </div>
+        <div className="btc-assignments-legend">
+          <span className="btc-deadline-chip green">14+ days</span>
+          <span className="btc-deadline-chip yellow">7–13 days</span>
+          <span className="btc-deadline-chip red">Under 7 days / overdue</span>
+        </div>
+        <div className="btc-assignments-list">
+          {sorted.length === 0 && (
+            <div className="btc-empty-panel">
+              <p>No assignments tracked yet.</p>
+              <p className="btc-empty-sub">Add a name, its grade weight, and the deadline below.</p>
+            </div>
+          )}
+          {sorted.map((a) => (
+            <AssignmentRow
+              key={a.id}
+              assignment={a}
+              onChange={(next) => onUpdate(a.id, next)}
+              onDelete={() => onDelete(a.id)}
+            />
+          ))}
+        </div>
+        <button className="btc-btn btc-btn-outline" onClick={() => onAdd(makeAssignment())}>
+          <Plus size={15} /> Add assignment
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function NextDeadlineBadge({ course }) {
+  const next = nextDeadline(course);
+  if (!next) return null;
+  const color = deadlineColor(next.days);
+  return (
+    <span className={`btc-next-deadline ${color}`}>
+      Next deadline: <strong>{next.name}</strong> —{" "}
+      {next.days === 0 ? "due today" : `in ${next.days} day${next.days === 1 ? "" : "s"}`}
+    </span>
+  );
+}
+
+
 const WEEK_TAB_KEYS = ["reading", "lecture", "files"];
 const WEEK_TAB_LABELS = { reading: "Reading notes", lecture: "Lecture notes", files: "Readings" };
 
-function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCourse, showToast, flashId, driveStatus, onUploadReading, onDeleteReading, onUploadCourseOutline, onDeleteCourseOutline, onConnectDrive }) {
+function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCourse, showToast, flashId, driveStatus, onUploadReading, onDeleteReading, onConnectDrive }) {
   const week = course.weeks[weekNum - 1];
 
   const updateNote = (noteId, next) => {
@@ -2706,14 +2863,38 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
     updateWeek(weekNum, { ...week, title });
   };
 
-  const [showOutlineModal, setShowOutlineModal] = useState(false);
-
   // Optional split view: off by default (each tab full-width, one at a time).
   // When on, the current tab and a chosen second tab render side by side.
   const [splitOn, setSplitOn] = useState(false);
   const [secondaryTab, setSecondaryTab] = useState("lecture");
   const [splitRatio, setSplitRatio] = useState(0.5);
   const splitRowRef = useRef(null);
+
+  // Draggable tab order — a personal display preference, not course content,
+  // so it lives in localStorage rather than the synced notebook data.
+  const [tabOrder, setTabOrder] = useState(loadTabOrder);
+  useEffect(() => {
+    try {
+      localStorage.setItem(TAB_ORDER_KEY, JSON.stringify(tabOrder));
+    } catch (e) {}
+  }, [tabOrder]);
+  const draggedTabRef = useRef(null);
+  const handleTabDragStart = (key) => (e) => {
+    draggedTabRef.current = key;
+    e.dataTransfer.effectAllowed = "move";
+  };
+  const handleTabDragOver = (e) => e.preventDefault();
+  const handleTabDrop = (targetKey) => (e) => {
+    e.preventDefault();
+    const draggedKey = draggedTabRef.current;
+    draggedTabRef.current = null;
+    if (!draggedKey || draggedKey === targetKey) return;
+    setTabOrder((order) => {
+      const next = order.filter((k) => k !== draggedKey);
+      next.splice(next.indexOf(targetKey), 0, draggedKey);
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (splitOn && secondaryTab === weekTab) {
@@ -2747,12 +2928,7 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
       <div className="btc-week-heading btc-heading-row">
         <div>
           <span className="btc-week-eyebrow">{course.name}</span>
-          <div className="btc-week-title-row-outer">
-            <button className="btc-btn btc-btn-outline small btc-course-outline-btn" onClick={() => setShowOutlineModal(true)}>
-              <BookOpen size={13} /> Course Outline
-            </button>
-            <EditableWeekTitle week={week} onRename={renameWeek} />
-          </div>
+          <EditableWeekTitle week={week} onRename={renameWeek} />
         </div>
         <div className="btc-week-download-group">
           <DownloadMenu
@@ -2777,24 +2953,20 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
       </div>
 
       <div className="btc-tabs">
-        <button
-          className={`btc-tab${weekTab === "reading" ? " active" : ""}`}
-          onClick={() => setWeekTab("reading")}
-        >
-          Reading notes
-        </button>
-        <button
-          className={`btc-tab${weekTab === "lecture" ? " active" : ""}`}
-          onClick={() => setWeekTab("lecture")}
-        >
-          Lecture notes
-        </button>
-        <button
-          className={`btc-tab${weekTab === "files" ? " active" : ""}`}
-          onClick={() => setWeekTab("files")}
-        >
-          Readings
-        </button>
+        {tabOrder.map((key) => (
+          <button
+            key={key}
+            draggable
+            onDragStart={handleTabDragStart(key)}
+            onDragOver={handleTabDragOver}
+            onDrop={handleTabDrop(key)}
+            className={`btc-tab${weekTab === key ? " active" : ""}`}
+            onClick={() => setWeekTab(key)}
+            title="Drag to reorder"
+          >
+            {WEEK_TAB_LABELS[key]}
+          </button>
+        ))}
         <div className="btc-split-controls">
           <button
             className={`btc-btn btc-btn-outline small${splitOn ? " active" : ""}`}
@@ -2810,7 +2982,7 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
               onChange={(e) => setSecondaryTab(e.target.value)}
               title="Second tab to show"
             >
-              {WEEK_TAB_KEYS.filter((k) => k !== weekTab).map((k) => (
+              {tabOrder.filter((k) => k !== weekTab).map((k) => (
                 <option key={k} value={k}>
                   {WEEK_TAB_LABELS[k]}
                 </option>
@@ -2925,17 +3097,6 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
 
         {splitOn && <div className="btc-split-handle" style={{ order: 1 }} onMouseDown={startSplitResize} />}
       </div>
-
-      {showOutlineModal && (
-        <CourseOutlineModal
-          course={course}
-          driveStatus={driveStatus}
-          onUpload={onUploadCourseOutline}
-          onDelete={onDeleteCourseOutline}
-          onConnectDrive={onConnectDrive}
-          onClose={() => setShowOutlineModal(false)}
-        />
-      )}
     </div>
   );
 }
@@ -3874,6 +4035,9 @@ export default function BeatTheCurve() {
   const [toast, setToast] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [confirmSignOutOpen, setConfirmSignOutOpen] = useState(false);
+  const [showOutlineModal, setShowOutlineModal] = useState(false);
+  const [showReadingScheduleModal, setShowReadingScheduleModal] = useState(false);
+  const [showAssignmentsModal, setShowAssignmentsModal] = useState(false);
   const [pendingImport, setPendingImport] = useState(null);
   const fileInputRef = useRef(null);
 
@@ -4299,6 +4463,7 @@ export default function BeatTheCurve() {
       docId: null,
       readingsFolderId: null,
       outlineFolderId: null,
+      readingScheduleFolderId: null,
       weekFolders: {},
     };
     entry.weekFolders = entry.weekFolders || {};
@@ -4321,10 +4486,20 @@ export default function BeatTheCurve() {
       outlineFolderId = entry.outlineFolderId;
     }
 
+    let readingScheduleFolderId = null;
+    if (opts.readingSchedule) {
+      entry.readingScheduleFolderId = await ensureFolder(
+        entry.readingScheduleFolderId,
+        "Reading Schedule",
+        entry.folderId
+      );
+      readingScheduleFolderId = entry.readingScheduleFolderId;
+    }
+
     map.courses[course.id] = entry;
     driveMapRef.current = map;
     saveDriveMap(map);
-    return { folderId: entry.folderId, weekFolderId, outlineFolderId };
+    return { folderId: entry.folderId, weekFolderId, outlineFolderId, readingScheduleFolderId };
   }, []);
 
   const uploadReadingPdf = useCallback(
@@ -4369,8 +4544,10 @@ export default function BeatTheCurve() {
     [currentCourse, updateWeek]
   );
 
-  const uploadCourseOutline = useCallback(
-    async (file) => {
+  // Shared by Course Outline and Reading Schedule — both are "one PDF for the
+  // whole course, uploaded once" stored under `courseField` in course data.
+  const uploadCourseDoc = useCallback(
+    async (courseField, folderOpt, docLabel, file) => {
       if (!currentCourse) return;
       if (driveStatusRef.current === "disconnected") {
         showToast("Connect Google Drive first");
@@ -4378,21 +4555,22 @@ export default function BeatTheCurve() {
       }
       showToast("Uploading…");
       try {
-        const { outlineFolderId } = await ensureCourseFolders(currentCourse, { outline: true });
-        const oldOutline = currentCourse.outlinePdf;
+        const folders = await ensureCourseFolders(currentCourse, { [folderOpt]: true });
+        const folderId = folders[`${folderOpt}FolderId`];
+        const oldDoc = currentCourse[courseField];
         const result = await driveUploadBinary(
-          { name: file.name, mimeType: "application/pdf", parents: [outlineFolderId] },
+          { name: file.name, mimeType: "application/pdf", parents: [folderId] },
           "application/pdf",
           file
         );
         updateCourse({
           ...currentCourse,
-          outlinePdf: { fileId: result.id, name: file.name, uploadedAt: Date.now() },
+          [courseField]: { fileId: result.id, name: file.name, uploadedAt: Date.now() },
         });
-        if (oldOutline && oldOutline.fileId) {
-          driveDeleteFile(oldOutline.fileId).catch(() => {});
+        if (oldDoc && oldDoc.fileId) {
+          driveDeleteFile(oldDoc.fileId).catch(() => {});
         }
-        showToast("Course outline uploaded");
+        showToast(`${docLabel} uploaded`);
       } catch (e) {
         showToast("Couldn't upload — check your Drive connection");
       }
@@ -4400,12 +4578,54 @@ export default function BeatTheCurve() {
     [currentCourse, updateCourse, ensureCourseFolders, showToast]
   );
 
-  const deleteCourseOutline = useCallback(() => {
-    if (!currentCourse || !currentCourse.outlinePdf) return;
-    const old = currentCourse.outlinePdf;
-    updateCourse({ ...currentCourse, outlinePdf: null });
-    driveDeleteFile(old.fileId).catch(() => {});
-  }, [currentCourse, updateCourse]);
+  const deleteCourseDoc = useCallback(
+    (courseField) => {
+      if (!currentCourse || !currentCourse[courseField]) return;
+      const old = currentCourse[courseField];
+      updateCourse({ ...currentCourse, [courseField]: null });
+      driveDeleteFile(old.fileId).catch(() => {});
+    },
+    [currentCourse, updateCourse]
+  );
+
+  const uploadCourseOutline = useCallback(
+    (file) => uploadCourseDoc("outlinePdf", "outline", "Course outline", file),
+    [uploadCourseDoc]
+  );
+  const deleteCourseOutline = useCallback(() => deleteCourseDoc("outlinePdf"), [deleteCourseDoc]);
+
+  const uploadReadingSchedule = useCallback(
+    (file) => uploadCourseDoc("readingSchedulePdf", "readingSchedule", "Reading schedule", file),
+    [uploadCourseDoc]
+  );
+  const deleteReadingSchedule = useCallback(() => deleteCourseDoc("readingSchedulePdf"), [deleteCourseDoc]);
+
+  const addAssignment = useCallback(
+    (assignment) => {
+      if (!currentCourse) return;
+      updateCourse({ ...currentCourse, assignments: [...currentCourse.assignments, assignment] });
+    },
+    [currentCourse, updateCourse]
+  );
+
+  const updateAssignment = useCallback(
+    (id, next) => {
+      if (!currentCourse) return;
+      updateCourse({
+        ...currentCourse,
+        assignments: currentCourse.assignments.map((a) => (a.id === id ? next : a)),
+      });
+    },
+    [currentCourse, updateCourse]
+  );
+
+  const deleteAssignment = useCallback(
+    (id) => {
+      if (!currentCourse) return;
+      updateCourse({ ...currentCourse, assignments: currentCourse.assignments.filter((a) => a.id !== id) });
+    },
+    [currentCourse, updateCourse]
+  );
 
   const createCourse = (name) => {
     const course = makeCourse(name);
@@ -4575,6 +4795,18 @@ export default function BeatTheCurve() {
               onCreate={createCourse}
               onDelete={requestDeleteCourse}
             />
+            <div className="btc-course-doc-group">
+              <button className="btc-btn btc-btn-outline small" onClick={() => setShowOutlineModal(true)}>
+                <BookOpen size={13} /> Course Outline
+              </button>
+              <button className="btc-btn btc-btn-outline small" onClick={() => setShowReadingScheduleModal(true)}>
+                <FileText size={13} /> Reading Schedule
+              </button>
+              <button className="btc-btn btc-btn-outline small" onClick={() => setShowAssignmentsModal(true)}>
+                <ListTree size={13} /> Assignments
+              </button>
+              <NextDeadlineBadge course={currentCourse} />
+            </div>
             <DownloadMenu
               label="Download full course (Weeks 1–12)"
               baseName={`${currentCourse.name} — Full Course`}
@@ -4607,8 +4839,6 @@ export default function BeatTheCurve() {
                     driveStatus={driveStatus}
                     onUploadReading={uploadReadingPdf}
                     onDeleteReading={deleteReadingPdf}
-                    onUploadCourseOutline={uploadCourseOutline}
-                    onDeleteCourseOutline={deleteCourseOutline}
                     onConnectDrive={signInWithGoogle}
                   />
                 ) : nav.synthTab === "outline" ? (
@@ -4649,6 +4879,39 @@ export default function BeatTheCurve() {
           signOutGoogle();
         }}
       />
+      {currentCourse && showOutlineModal && (
+        <CourseDocModal
+          title={`${currentCourse.name} — Course Outline`}
+          uploadPrompt="Upload Course Outline Here"
+          pdfRef={currentCourse.outlinePdf}
+          driveStatus={driveStatus}
+          onUpload={uploadCourseOutline}
+          onDelete={deleteCourseOutline}
+          onConnectDrive={signInWithGoogle}
+          onClose={() => setShowOutlineModal(false)}
+        />
+      )}
+      {currentCourse && showReadingScheduleModal && (
+        <CourseDocModal
+          title={`${currentCourse.name} — Reading Schedule`}
+          uploadPrompt="Upload Reading Schedule Here"
+          pdfRef={currentCourse.readingSchedulePdf}
+          driveStatus={driveStatus}
+          onUpload={uploadReadingSchedule}
+          onDelete={deleteReadingSchedule}
+          onConnectDrive={signInWithGoogle}
+          onClose={() => setShowReadingScheduleModal(false)}
+        />
+      )}
+      {currentCourse && showAssignmentsModal && (
+        <AssignmentsModal
+          course={currentCourse}
+          onAdd={addAssignment}
+          onUpdate={updateAssignment}
+          onDelete={deleteAssignment}
+          onClose={() => setShowAssignmentsModal(false)}
+        />
+      )}
     </div>
   );
 }
@@ -5196,9 +5459,57 @@ function BaseStyles() {
       .btc-reading-chip.active .btc-reading-chip-name { color: var(--spine); font-weight: 600; }
       .btc-readings-panel .btc-pdf-viewer { height: 640px; }
 
-      /* ---------- Course outline button in week heading ---------- */
-      .btc-week-title-row-outer { display: flex; align-items: center; gap: 12px; }
-      .btc-course-outline-btn { flex-shrink: 0; }
+      /* ---------- Course bar document buttons + deadline badge ---------- */
+      .btc-course-doc-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+      .btc-next-deadline {
+        font-family: 'Inter', sans-serif; font-size: 0.78rem;
+        padding: 5px 10px; border-radius: 12px; border: 1px solid transparent;
+        white-space: nowrap;
+      }
+      .btc-next-deadline strong { font-weight: 600; }
+      .btc-next-deadline.green { background: #E4EFE4; color: #3B6B3B; border-color: #C6DEC6; }
+      .btc-next-deadline.yellow { background: #FBF0D2; color: #8A6A16; border-color: #EFDDA0; }
+      .btc-next-deadline.red { background: var(--accent-soft); color: var(--accent); border-color: #E3BEB4; }
+      .btc-root.btc-dark .btc-next-deadline.green { background: #1E2E1E; color: #8FCB8F; border-color: #2E432E; }
+      .btc-root.btc-dark .btc-next-deadline.yellow { background: #332B12; color: #E8C868; border-color: #4A3E1C; }
+      .btc-root.btc-dark .btc-next-deadline.red { background: var(--accent-soft); color: var(--accent); border-color: #4A2C25; }
+
+      .btc-deadline-chip {
+        font-family: 'Inter', sans-serif; font-size: 0.72rem; font-weight: 600;
+        padding: 3px 9px; border-radius: 10px; white-space: nowrap;
+      }
+      .btc-deadline-chip.green { background: #E4EFE4; color: #3B6B3B; }
+      .btc-deadline-chip.yellow { background: #FBF0D2; color: #8A6A16; }
+      .btc-deadline-chip.red { background: var(--accent-soft); color: var(--accent); }
+      .btc-deadline-chip.muted { background: var(--rule); color: var(--muted); }
+      .btc-root.btc-dark .btc-deadline-chip.green { background: #1E2E1E; color: #8FCB8F; }
+      .btc-root.btc-dark .btc-deadline-chip.yellow { background: #332B12; color: #E8C868; }
+      .btc-root.btc-dark .btc-deadline-chip.red { background: var(--accent-soft); color: var(--accent); }
+
+      /* ---------- Assignments modal ---------- */
+      .btc-assignments-modal { max-width: 720px; height: auto; max-height: 80vh; }
+      .btc-assignments-legend { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+      .btc-assignments-list {
+        display: flex; flex-direction: column; gap: 8px; overflow-y: auto;
+        margin-bottom: 16px; flex: 1;
+      }
+      .btc-assignment-row {
+        display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+        border: 1px solid var(--rule); border-radius: 3px; padding: 10px 12px;
+        background: var(--paper-raised);
+      }
+      .btc-assignment-input {
+        border: 1px solid var(--rule-strong); border-radius: 2px; background: var(--paper);
+        padding: 7px 9px; font-size: 0.88rem; color: var(--ink); font-family: 'Newsreader', Georgia, serif;
+      }
+      .btc-assignment-input.name { flex: 1.6; min-width: 140px; }
+      .btc-assignment-input.weight { flex: 0.6; min-width: 80px; }
+      .btc-assignment-input.date { flex: 0.9; min-width: 150px; font-family: 'Inter', sans-serif; }
+
+      /* ---------- Draggable week tabs ---------- */
+      .btc-tab { cursor: grab; }
+      .btc-tab:active { cursor: grabbing; }
 
       /* ---------- Download menu ---------- */
       .btc-download-wrap { position: relative; display: inline-block; }
