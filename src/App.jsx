@@ -76,6 +76,7 @@ const DRIVE_ROOT_FOLDER_NAME = "Beat the Curve";
 const DRIVE_MAP_KEY = "beat-the-curve-drive-map";
 const DRIVE_SYNC_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 const DARK_MODE_KEY = "beat-the-curve-dark-mode";
+const PANEL_WIDTH_KEY = "beat-the-curve-panel-width";
 
 const COMMON_COURSES = [
   "Torts",
@@ -3125,6 +3126,19 @@ function Onboarding({ onCreate, onImportClick }) {
 
 const DEFAULT_DATA = { schemaVersion: SCHEMA_VERSION, courses: [] };
 
+function ResizablePane({ width, onResizeStart, children }) {
+  return (
+    <div className="btc-resizable-pane" style={{ maxWidth: width }}>
+      {children}
+      <div
+        className="btc-resize-handle"
+        onMouseDown={onResizeStart}
+        title="Drag to narrow or widen this pane"
+      />
+    </div>
+  );
+}
+
 export default function BeatTheCurve() {
   const [data, setData] = useState(DEFAULT_DATA);
   const [loaded, setLoaded] = useState(false);
@@ -3157,6 +3171,47 @@ export default function BeatTheCurve() {
       localStorage.setItem(DARK_MODE_KEY, darkMode ? "1" : "0");
     } catch (e) {}
   }, [darkMode]);
+
+  // Same idea as dark mode: a display preference, not course content.
+  // The note/outline/prewrite panels share this one adjustable width, dragged
+  // via the handle at the pane's right edge (see ResizablePane below).
+  const [panelWidth, setPanelWidth] = useState(() => {
+    try {
+      const v = parseInt(localStorage.getItem(PANEL_WIDTH_KEY), 10);
+      return Number.isFinite(v) ? v : 820;
+    } catch (e) {
+      return 820;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidth));
+    } catch (e) {}
+  }, [panelWidth]);
+
+  const startPanelResize = useCallback(
+    (e) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = panelWidth;
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+
+      const onMove = (ev) => {
+        const next = Math.min(1800, Math.max(420, startWidth + (ev.clientX - startX)));
+        setPanelWidth(next);
+      };
+      const onUp = () => {
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+      };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    },
+    [panelWidth]
+  );
 
   // ---- Google Drive sync state ----
   const [driveStatus, setDriveStatus] = useState("disconnected");
@@ -3603,34 +3658,36 @@ export default function BeatTheCurve() {
               closeMobile={() => setMobileOpen(false)}
             />
             <main className="btc-main">
-              {nav.view === "week" ? (
-                <WeekView
-                  course={currentCourse}
-                  weekNum={nav.weekNum}
-                  weekTab={nav.weekTab}
-                  setWeekTab={(t) => setNav((n) => ({ ...n, weekTab: t }))}
-                  updateWeek={updateWeek}
-                  updateCourse={updateCourse}
-                  showToast={showToast}
-                  flashId={flashId}
-                />
-              ) : nav.synthTab === "outline" ? (
-                <OutlineView
-                  course={currentCourse}
-                  updateCourse={updateCourse}
-                  flashId={flashId}
-                  setFlashId={setFlashId}
-                  showToast={showToast}
-                />
-              ) : (
-                <PrewritesView
-                  course={currentCourse}
-                  updateCourse={updateCourse}
-                  flashId={flashId}
-                  setFlashId={setFlashId}
-                  showToast={showToast}
-                />
-              )}
+              <ResizablePane width={panelWidth} onResizeStart={startPanelResize}>
+                {nav.view === "week" ? (
+                  <WeekView
+                    course={currentCourse}
+                    weekNum={nav.weekNum}
+                    weekTab={nav.weekTab}
+                    setWeekTab={(t) => setNav((n) => ({ ...n, weekTab: t }))}
+                    updateWeek={updateWeek}
+                    updateCourse={updateCourse}
+                    showToast={showToast}
+                    flashId={flashId}
+                  />
+                ) : nav.synthTab === "outline" ? (
+                  <OutlineView
+                    course={currentCourse}
+                    updateCourse={updateCourse}
+                    flashId={flashId}
+                    setFlashId={setFlashId}
+                    showToast={showToast}
+                  />
+                ) : (
+                  <PrewritesView
+                    course={currentCourse}
+                    updateCourse={updateCourse}
+                    flashId={flashId}
+                    setFlashId={setFlashId}
+                    showToast={showToast}
+                  />
+                )}
+              </ResizablePane>
             </main>
           </div>
         </div>
@@ -3881,8 +3938,23 @@ function BaseStyles() {
         padding: 34px 40px 80px;
       }
 
+      .btc-resizable-pane {
+        position: relative;
+        width: 100%;
+      }
+      .btc-resize-handle {
+        position: absolute; top: 0; bottom: 0; right: -14px; width: 16px;
+        cursor: col-resize; z-index: 5;
+      }
+      .btc-resize-handle::after {
+        content: ""; position: absolute; top: 0; bottom: 0; left: 6px; width: 3px;
+        border-radius: 2px; background: var(--rule-strong); opacity: 0;
+        transition: opacity 0.15s, background 0.15s;
+      }
+      .btc-resize-handle:hover::after { opacity: 1; background: var(--spine); }
+
       /* ---------- Headings ---------- */
-      .btc-week-heading { margin-bottom: 20px; max-width: 760px; }
+      .btc-week-heading { margin-bottom: 20px; max-width: none; }
       .btc-week-eyebrow {
         font-family: 'Inter', sans-serif; font-size: 0.72rem; color: var(--muted);
       }
@@ -3901,7 +3973,7 @@ function BaseStyles() {
         border-bottom: 2px solid transparent; transform: translateY(1px);
       }
       .btc-tab.active { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
-      .btc-tab-panel { max-width: 760px; }
+      .btc-tab-panel { max-width: none; }
 
       /* ---------- Fields ---------- */
       .btc-field { margin-bottom: 14px; }
@@ -4088,11 +4160,11 @@ function BaseStyles() {
       .btc-icon-btn.small { padding: 3px; }
 
       /* ---------- Synthesis / outline ---------- */
-      .btc-synth-view { max-width: 980px; }
+      .btc-synth-view { max-width: none; }
       .btc-build-row {
         display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
         border: 1px solid var(--rule); background: var(--paper-raised);
-        border-radius: 3px; padding: 12px 16px; margin-bottom: 26px; max-width: 760px;
+        border-radius: 3px; padding: 12px 16px; margin-bottom: 26px;
       }
       .btc-build-label {
         display: flex; align-items: center; gap: 6px;
@@ -4132,7 +4204,7 @@ function BaseStyles() {
       .btc-toc-num { font-size: 0.7rem; color: var(--muted); flex-shrink: 0; }
 
       .btc-outline-sections { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 20px; }
-      .btc-prewrites-list { max-width: 760px; }
+      .btc-prewrites-list { max-width: none; }
       .btc-outline-section {
         background: var(--paper-raised); border: 1px solid var(--rule);
         border-radius: 3px; padding: 16px 18px; scroll-margin-top: 90px;
