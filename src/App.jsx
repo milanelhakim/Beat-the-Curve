@@ -73,6 +73,7 @@ const DRIVE_ROOT_FOLDER_NAME = "Beat the Curve";
 const DRIVE_MAP_KEY = "beat-the-curve-drive-map";
 const DRIVE_SYNC_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 const DARK_MODE_KEY = "beat-the-curve-dark-mode";
+const APP_ZOOM_KEY = "beat-the-curve-app-zoom";
 const PANEL_WIDTH_KEY = "beat-the-curve-panel-width";
 const TAB_ORDER_KEY = "beat-the-curve-tab-order";
 const DEFAULT_TAB_ORDER = ["reading", "lecture", "files"];
@@ -1664,6 +1665,80 @@ function RichTextField({ value, onChange, placeholder, minHeight = 90 }) {
     emitChange();
   };
 
+  // Proper list-aware indent: execCommand('indent') on a list item just adds
+  // margin to the text, leaving the bullet/number behind — it doesn't nest
+  // the <li> into a sub-list the way Word/Docs do. This does the actual DOM
+  // restructuring so the marker moves together with its text.
+  const indentListItem = (direction) => {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return false;
+    let node = sel.getRangeAt(0).startContainer;
+    if (node.nodeType === 3) node = node.parentElement;
+    const li = node && node.closest ? node.closest("li") : null;
+    if (!li || !ref.current || !ref.current.contains(li)) return false;
+
+    const parentList = li.parentElement;
+    if (!parentList) return false;
+
+    if (direction === "in") {
+      const prevLi = li.previousElementSibling;
+      if (!prevLi || prevLi.tagName !== "LI") return false; // nothing above to nest under
+      const tag = parentList.tagName; // UL or OL
+      let sublist = prevLi.querySelector(`:scope > ${tag.toLowerCase()}`);
+      if (!sublist) {
+        sublist = document.createElement(tag);
+        prevLi.appendChild(sublist);
+      }
+      sublist.appendChild(li);
+    } else {
+      const grandLi = parentList.parentElement;
+      if (!grandLi || grandLi.tagName !== "LI") return false; // already at the top level
+      const outerList = grandLi.parentElement;
+      outerList.insertBefore(li, grandLi.nextSibling);
+      if (!parentList.children.length) parentList.remove();
+    }
+    return true;
+  };
+
+  const execIndent = (direction) => {
+    if (ref.current) ref.current.focus();
+    if (!indentListItem(direction)) {
+      document.execCommand(direction === "in" ? "indent" : "outdent");
+    }
+    emitChange();
+  };
+
+  const handleKeyDown = (e) => {
+    const mod = e.metaKey || e.ctrlKey;
+    if (!mod) return;
+    const key = e.key.toLowerCase();
+    if (key === "b") {
+      e.preventDefault();
+      exec("bold");
+    } else if (key === "i") {
+      e.preventDefault();
+      exec("italic");
+    } else if (key === "u") {
+      e.preventDefault();
+      exec("underline");
+    } else if (key === "k") {
+      e.preventDefault();
+      openAddLink();
+    } else if (e.shiftKey && e.code === "Digit8") {
+      e.preventDefault();
+      exec("insertUnorderedList");
+    } else if (e.shiftKey && e.code === "Digit7") {
+      e.preventDefault();
+      exec("insertOrderedList");
+    } else if (key === "]") {
+      e.preventDefault();
+      execIndent("in");
+    } else if (key === "[") {
+      e.preventDefault();
+      execIndent("out");
+    }
+  };
+
   const saveSelection = () => {
     const sel = window.getSelection();
     if (sel && sel.rangeCount > 0 && ref.current && ref.current.contains(sel.anchorNode)) {
@@ -1807,7 +1882,7 @@ function RichTextField({ value, onChange, placeholder, minHeight = 90 }) {
           className="btc-rte-btn"
           title="Decrease indent"
           onMouseDown={(e) => e.preventDefault()}
-          onClick={() => exec("outdent")}
+          onClick={() => execIndent("out")}
         >
           <IndentIcon size={13} dir="out" />
         </button>
@@ -1816,7 +1891,7 @@ function RichTextField({ value, onChange, placeholder, minHeight = 90 }) {
           className="btc-rte-btn"
           title="Increase indent"
           onMouseDown={(e) => e.preventDefault()}
-          onClick={() => exec("indent")}
+          onClick={() => execIndent("in")}
         >
           <IndentIcon size={13} dir="in" />
         </button>
@@ -1874,6 +1949,7 @@ function RichTextField({ value, onChange, placeholder, minHeight = 90 }) {
         onInput={emitChange}
         onPaste={handlePaste}
         onContextMenu={handleContextMenu}
+        onKeyDown={handleKeyDown}
       />
       {linkMenu && (
         <div className="btc-rte-link-popover">
@@ -3961,6 +4037,33 @@ export default function BeatTheCurve() {
     } catch (e) {}
   }, [darkMode]);
 
+  // Cmd/Ctrl + scroll wheel zooms the whole app (like Figma/Google Maps).
+  // Shift+scroll is intentionally left alone here — browsers and trackpads
+  // already natively convert it to horizontal scroll, so adding our own
+  // handling on top would risk double-applying the scroll.
+  const [appZoom, setAppZoom] = useState(() => {
+    try {
+      const v = parseFloat(localStorage.getItem(APP_ZOOM_KEY));
+      return Number.isFinite(v) ? v : 1;
+    } catch (e) {
+      return 1;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(APP_ZOOM_KEY, String(appZoom));
+    } catch (e) {}
+  }, [appZoom]);
+  useEffect(() => {
+    const onWheel = (e) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      e.preventDefault();
+      setAppZoom((z) => Math.min(2, Math.max(0.6, z - e.deltaY * 0.0015)));
+    };
+    window.addEventListener("wheel", onWheel, { passive: false });
+    return () => window.removeEventListener("wheel", onWheel);
+  }, []);
+
   // Same idea as dark mode: a display preference, not course content.
   // The note/outline/prewrite panels share this one adjustable width, dragged
   // via the handle at the pane's right edge (see ResizablePane below).
@@ -4607,7 +4710,15 @@ export default function BeatTheCurve() {
   }
 
   return (
-    <div className={`btc-root${darkMode ? " btc-dark" : ""}`}>
+    <div
+      className={`btc-root${darkMode ? " btc-dark" : ""}`}
+      style={{
+        transform: `scale(${appZoom})`,
+        transformOrigin: "top left",
+        width: `${100 / appZoom}%`,
+        height: `${100 / appZoom}%`,
+      }}
+    >
       <BaseStyles />
 
       <header className="btc-header">
@@ -4640,6 +4751,15 @@ export default function BeatTheCurve() {
           ) : (
             <button className="btc-btn btc-btn-primary small" onClick={signInWithGoogle}>
               <Cloud size={14} /> Sign in with Google
+            </button>
+          )}
+          {appZoom !== 1 && (
+            <button
+              className="btc-btn btc-btn-outline small"
+              onClick={() => setAppZoom(1)}
+              title="Reset zoom to 100% (Cmd/Ctrl + scroll to zoom)"
+            >
+              {Math.round(appZoom * 100)}%
             </button>
           )}
           <button
