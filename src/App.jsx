@@ -3955,6 +3955,57 @@ function ImportConfirmDialog({ pending, onCancel, onConfirm }) {
   );
 }
 
+function CourseHomepage({ courses, onSelectCourse, onCreateCourse }) {
+  const [newName, setNewName] = useState("");
+
+  const submitNew = () => {
+    if (!newName.trim()) return;
+    onCreateCourse(newName.trim());
+    setNewName("");
+  };
+
+  return (
+    <div className="btc-homepage">
+      <div className="btc-homepage-head">
+        <h1 className="btc-homepage-title">Your courses</h1>
+        <p className="btc-homepage-sub">Pick up where you left off, or start a new one.</p>
+      </div>
+      <div className="btc-homepage-grid">
+        {courses.map((c) => {
+          const weeksStarted = c.weeks.filter(weekHasContent).length;
+          const next = nextDeadline(c);
+          return (
+            <button key={c.id} className="btc-course-card" onClick={() => onSelectCourse(c.id)}>
+              <div className="btc-course-card-name">{c.name}</div>
+              <div className="btc-course-card-meta">{weeksStarted} of 12 weeks started</div>
+              {next && (
+                <span className={`btc-deadline-chip ${deadlineColor(next.days)}`}>
+                  {next.name} — {next.days === 0 ? "due today" : `${next.days}d`}
+                </span>
+              )}
+            </button>
+          );
+        })}
+        <div className="btc-course-card btc-course-card-new">
+          <div className="btc-course-card-name">New course</div>
+          <input
+            className="btc-input"
+            placeholder="Course name..."
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitNew();
+            }}
+          />
+          <button className="btc-btn btc-btn-primary small" disabled={!newName.trim()} onClick={submitNew}>
+            <Plus size={14} /> Add course
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Onboarding({ onCreate, onImportClick }) {
   const [name, setName] = useState("");
   return (
@@ -4030,6 +4081,7 @@ export default function BeatTheCurve() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [flashId, setFlashId] = useState(null);
   const [toast, setToast] = useState(null);
+  const [showHomepage, setShowHomepage] = useState(true);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [confirmSignOutOpen, setConfirmSignOutOpen] = useState(false);
   const [showOutlineModal, setShowOutlineModal] = useState(false);
@@ -4051,6 +4103,14 @@ export default function BeatTheCurve() {
     try {
       localStorage.setItem(DARK_MODE_KEY, darkMode ? "1" : "0");
     } catch (e) {}
+    // .btc-root's theme colors are CSS custom properties scoped to itself —
+    // <html>/<body> sit outside that scope and can't see them, so they were
+    // falling back to the browser's plain white default. That's the actual
+    // "white bleeding through at the edges" bug: it was never anything to do
+    // with layering, just two elements the CSS scoping couldn't reach.
+    const bg = darkMode ? "#1C1D1F" : "#F5F0E1";
+    document.documentElement.style.background = bg;
+    document.body.style.background = bg;
   }, [darkMode]);
 
   // Cmd/Ctrl + scroll wheel zooms the whole app (like Figma/Google Maps).
@@ -4674,6 +4734,7 @@ export default function BeatTheCurve() {
     const course = makeCourse(name);
     setData((d) => ({ ...d, courses: [...d.courses, course] }));
     setNav({ courseId: course.id, view: "week", weekNum: 1, weekTab: "reading", synthTab: "outline" });
+    setShowHomepage(false);
   };
 
   const requestDeleteCourse = (id) => setConfirmDeleteId(id);
@@ -4751,10 +4812,10 @@ export default function BeatTheCurve() {
           >
             <Menu size={18} />
           </button>
-          <div className="btc-wordmark">
+          <button className="btc-wordmark" onClick={() => setShowHomepage(true)} title="Back to all courses">
             <Scale size={17} />
             <span>Beat the Curve</span>
-          </div>
+          </button>
         </div>
 
         <GlobalSearch courses={data.courses} onNavigate={handleSearchNavigate} />
@@ -4835,9 +4896,20 @@ export default function BeatTheCurve() {
         onChange={handleImportFileChange}
       />
 
-      {!currentCourse ? (
+      {data.courses.length === 0 ? (
         <div className="btc-zoom-wrap" style={{ transform: `scale(${appZoom})`, transformOrigin: "top left" }}>
           <Onboarding onCreate={createCourse} onImportClick={triggerImportPicker} />
+        </div>
+      ) : showHomepage || !currentCourse ? (
+        <div className="btc-zoom-wrap" style={{ transform: `scale(${appZoom})`, transformOrigin: "top left" }}>
+          <CourseHomepage
+            courses={data.courses}
+            onSelectCourse={(id) => {
+              selectCourse(id);
+              setShowHomepage(false);
+            }}
+            onCreateCourse={createCourse}
+          />
         </div>
       ) : (
         <div className="btc-zoom-wrap" style={{ transform: `scale(${appZoom})`, transformOrigin: "top left" }}>
@@ -5057,7 +5129,9 @@ function BaseStyles() {
         letter-spacing: -0.01em;
         white-space: nowrap;
         color: var(--ink);
+        background: none; border: none; padding: 0; cursor: pointer;
       }
+      .btc-wordmark:hover { color: var(--spine); }
       .btc-header-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
       .btc-signed-in-as {
         font-family: 'Inter', sans-serif; font-size: 0.76rem; color: var(--muted);
@@ -5681,6 +5755,30 @@ function BaseStyles() {
 
       /* ---------- Flash highlight ---------- */
       .btc-flash { box-shadow: 0 0 0 2px var(--accent); }
+
+      /* ---------- Course homepage ---------- */
+      .btc-homepage { flex: 1; padding: 48px 40px 60px; max-width: 1100px; margin: 0 auto; width: 100%; }
+      .btc-homepage-head { margin-bottom: 30px; }
+      .btc-homepage-title {
+        font-size: 2.1rem; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 8px;
+      }
+      .btc-homepage-sub { color: var(--ink-soft); font-size: 1rem; }
+      .btc-homepage-grid {
+        display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px;
+      }
+      .btc-course-card {
+        background: var(--paper-raised); border: 1px solid var(--rule-strong); border-radius: 4px;
+        padding: 20px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+        text-align: left; min-height: 130px; transition: border-color 0.15s, box-shadow 0.15s;
+      }
+      .btc-course-card:hover { border-color: var(--spine); box-shadow: 0 6px 18px rgba(0,0,0,0.08); }
+      .btc-course-card-name {
+        font-family: 'Newsreader', Georgia, serif; font-size: 1.2rem; font-weight: 600;
+        letter-spacing: -0.01em; line-height: 1.3;
+      }
+      .btc-course-card-meta { font-family: 'Inter', sans-serif; font-size: 0.8rem; color: var(--muted); }
+      .btc-course-card-new { border-style: dashed; gap: 10px; }
+      .btc-course-card-new .btc-input { width: 100%; }
 
       /* ---------- Onboarding ---------- */
       .btc-onboarding {
