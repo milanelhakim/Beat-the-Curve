@@ -28,7 +28,12 @@ import {
   CloudOff,
   ExternalLink,
   RefreshCw,
+  Sun,
+  Moon,
 } from "lucide-react";
+import RichTextField from "./RichTextField.jsx";
+import { htmlToPlain, hasText, weekLabel, looksLikeHtml } from "./htmlUtils.js";
+import { blocksToDocxBlob, blocksToHtmlDocument } from "./docxExport.js";
 
 /* ------------------------------------------------------------------ */
 /*  Constants & helpers                                                */
@@ -36,6 +41,7 @@ import {
 
 const WEEK_COUNT = 12;
 const STORAGE_KEY = "beat-the-curve-data-v1";
+const THEME_KEY = "beat-the-curve-theme";
 const SCHEMA_VERSION = 1;
 
 /*
@@ -80,6 +86,7 @@ function uid(prefix = "id") {
 function makeWeek(weekNum) {
   return {
     weekNum,
+    title: `Week ${weekNum}`,
     readingNotes: [],
     lecture: { discussion: "", emphasis: "", keyRules: "" },
   };
@@ -107,6 +114,9 @@ function makeCase() {
     issue: "",
     holding: "",
     reasoning: "",
+    includeDissent: false,
+    dissentSummary: "",
+    dissentSignificance: "",
   };
 }
 
@@ -231,6 +241,9 @@ function hydrateNote(n) {
     issue: typeof n.issue === "string" ? n.issue : "",
     holding: typeof n.holding === "string" ? n.holding : "",
     reasoning: typeof n.reasoning === "string" ? n.reasoning : "",
+    includeDissent: Boolean(n.includeDissent),
+    dissentSummary: typeof n.dissentSummary === "string" ? n.dissentSummary : "",
+    dissentSignificance: typeof n.dissentSignificance === "string" ? n.dissentSignificance : "",
   };
 }
 
@@ -246,8 +259,12 @@ function hydrateLecture(l) {
 
 function hydrateWeek(w, weekNum) {
   if (!w || typeof w !== "object") return makeWeek(weekNum);
+  const defaultTitle = `Week ${weekNum}`;
+  const title =
+    typeof w.title === "string" && w.title.trim() ? w.title.trim() : defaultTitle;
   return {
     weekNum,
+    title,
     readingNotes: Array.isArray(w.readingNotes) ? w.readingNotes.map(hydrateNote) : [],
     lecture: hydrateLecture(w.lecture),
   };
@@ -303,31 +320,34 @@ function hydrateData(raw) {
 function noteHasContent(note) {
   if (!note) return false;
   if (note.type === "concept") {
-    const own = [note.title, note.summary].some((v) => v && v.trim());
-    const cases = (note.cases || []).some((c) =>
-      [c.caseName, c.citation, c.note].some((v) => v && v.trim())
-    );
+    const own = [note.title, note.summary].some(hasText);
+    const cases = (note.cases || []).some((c) => [c.caseName, c.citation, c.note].some(hasText));
     return own || cases;
   }
   if (note.type === "evolution") {
-    const own = [note.title, note.currentRule].some((v) => v && v.trim());
+    const own = [note.title, note.currentRule].some(hasText);
     const tl = (note.timeline || []).some((t) =>
-      [t.caseName, t.citation, t.year, t.development].some((v) => v && v.trim())
+      [t.caseName, t.citation, t.year, t.development].some(hasText)
     );
     return own || tl;
   }
-  // brief (default/legacy)
-  return [note.caseName, note.citation, note.facts, note.procHistory, note.issue, note.holding, note.reasoning].some(
-    (v) => v && v.trim()
-  );
+  return [
+    note.caseName,
+    note.citation,
+    note.facts,
+    note.procHistory,
+    note.issue,
+    note.holding,
+    note.reasoning,
+    note.dissentSummary,
+    note.dissentSignificance,
+  ].some(hasText);
 }
 
 function weekHasContent(week) {
   if (!week) return false;
   const hasNote = week.readingNotes.some(noteHasContent);
-  const hasLecture = [week.lecture.discussion, week.lecture.emphasis, week.lecture.keyRules].some(
-    (v) => v && v.trim()
-  );
+  const hasLecture = [week.lecture.discussion, week.lecture.emphasis, week.lecture.keyRules].some(hasText);
   return hasNote || hasLecture;
 }
 
@@ -335,22 +355,22 @@ function compileNoteContent(note) {
   if (!noteHasContent(note)) return "";
   if (note.type === "concept") {
     const lines = [`### Concept: ${note.title || "Untitled concept"}`];
-    if (note.summary && note.summary.trim()) lines.push(note.summary.trim());
+    if (hasText(note.summary)) lines.push(htmlToPlain(note.summary));
     const cases = (note.cases || []).filter((c) => c.caseName || c.note);
     if (cases.length) {
       lines.push("");
       lines.push("Authorities:");
       cases.forEach((c) => {
         const cite = c.citation ? ` (${c.citation})` : "";
-        lines.push(`- **${c.caseName || "Untitled case"}${cite}**${c.note ? ` — ${c.note}` : ""}`);
+        lines.push(`- **${c.caseName || "Untitled case"}${cite}**${c.note ? ` — ${htmlToPlain(c.note)}` : ""}`);
       });
     }
     return lines.join("\n");
   }
   if (note.type === "evolution") {
     const lines = [`### Evolution of law: ${note.title || "Untitled doctrine"}`];
-    if (note.currentRule && note.currentRule.trim()) {
-      lines.push(`**Current rule:** ${note.currentRule.trim()}`);
+    if (hasText(note.currentRule)) {
+      lines.push(`**Current rule:** ${htmlToPlain(note.currentRule)}`);
     }
     const tl = (note.timeline || []).filter((t) => t.caseName || t.development);
     if (tl.length) {
@@ -359,7 +379,7 @@ function compileNoteContent(note) {
       tl.forEach((t) => {
         const cite = t.citation ? ` (${t.citation})` : "";
         const year = t.year ? `${t.year} — ` : "";
-        lines.push(`- ${year}**${t.caseName || "Untitled case"}${cite}**${t.development ? `: ${t.development}` : ""}`);
+        lines.push(`- ${year}**${t.caseName || "Untitled case"}${cite}**${t.development ? `: ${htmlToPlain(t.development)}` : ""}`);
       });
     }
     return lines.join("\n");
@@ -367,8 +387,12 @@ function compileNoteContent(note) {
   // brief
   const name = note.caseName || "Untitled case";
   const cite = note.citation ? ` (${note.citation})` : "";
-  const lines = [`- **${name}${cite}** — ${note.holding ? note.holding : "[holding not yet noted]"}`];
-  if (note.reasoning) lines.push(`  ${note.reasoning}`);
+  const lines = [`- **${name}${cite}** — ${hasText(note.holding) ? htmlToPlain(note.holding) : "[holding not yet noted]"}`];
+  if (hasText(note.reasoning)) lines.push(`  ${htmlToPlain(note.reasoning)}`);
+  if (note.includeDissent && (hasText(note.dissentSummary) || hasText(note.dissentSignificance))) {
+    if (hasText(note.dissentSummary)) lines.push(`  Dissent: ${htmlToPlain(note.dissentSummary)}`);
+    if (hasText(note.dissentSignificance)) lines.push(`  Significance of dissent: ${htmlToPlain(note.dissentSignificance)}`);
+  }
   return lines.join("\n");
 }
 
@@ -388,19 +412,19 @@ function compileWeekContent(week) {
   });
 
   const { discussion, emphasis, keyRules } = week.lecture;
-  if (keyRules && keyRules.trim()) {
+  if (hasText(keyRules)) {
     lines.push(`### Key rules from lecture`);
-    lines.push(keyRules.trim());
+    lines.push(htmlToPlain(keyRules));
     lines.push("");
   }
-  if (emphasis && emphasis.trim()) {
+  if (hasText(emphasis)) {
     lines.push(`### Professor's emphasis`);
-    lines.push(emphasis.trim());
+    lines.push(htmlToPlain(emphasis));
     lines.push("");
   }
-  if (discussion && discussion.trim()) {
+  if (hasText(discussion)) {
     lines.push(`### Class discussion`);
-    lines.push(discussion.trim());
+    lines.push(htmlToPlain(discussion));
     lines.push("");
   }
   return lines.join("\n").trim();
@@ -430,9 +454,10 @@ function buildPrewriteFromNote(note) {
       : note.title || "Untitled attack outline";
   const ruleSeed = note.type === "brief" ? note.holding : note.type === "concept" ? note.summary : note.currentRule;
   const authorities = buildAuthoritiesList(note);
+  const rulePlain = htmlToPlain(ruleSeed);
   const content = `## ${title}
 
-**Rule:** ${ruleSeed && ruleSeed.trim() ? ruleSeed.trim() : "[State the governing rule or elements]"}
+**Rule:** ${rulePlain ? rulePlain : "[State the governing rule or elements]"}`
 
 **Application:** [Insert Name of Accused/Party] arguably [insert defendant's action] when [insert conduct] occurred on [Insert Date/Location]. This element is [satisfied / not satisfied] because [tie reasoning to the rule].
 
@@ -535,29 +560,38 @@ function mdToBlocks(raw) {
   return blocks;
 }
 
+function labeledRich(label, html) {
+  if (!hasText(html)) return [];
+  return [
+    { type: "p", text: `${label}:` },
+    { type: "rich", html },
+  ];
+}
+
 function noteToBlocks(note, idx) {
   const blocks = [];
   if (note.type === "concept") {
     blocks.push({ type: "h4", text: `${idx}. Concept: ${note.title || "Untitled concept"}` });
-    if (note.summary && note.summary.trim()) blocks.push({ type: "p", text: note.summary.trim() });
-    const cases = (note.cases || []).filter((c) => c.caseName || c.note);
+    if (hasText(note.summary)) blocks.push({ type: "rich", html: note.summary });
+    const cases = (note.cases || []).filter((c) => hasText(c.caseName) || hasText(c.note));
     if (cases.length) {
       blocks.push({ type: "p", text: "Linked cases:" });
       cases.forEach((c) =>
         blocks.push({
           type: "li",
           text: `${c.caseName || "Untitled case"}${c.citation ? ` (${c.citation})` : ""}${
-            c.note ? ` — ${c.note}` : ""
+            hasText(c.note) ? ` — ${htmlToPlain(c.note)}` : ""
           }`,
         })
       );
     }
   } else if (note.type === "evolution") {
     blocks.push({ type: "h4", text: `${idx}. Evolution of law: ${note.title || "Untitled doctrine"}` });
-    if (note.currentRule && note.currentRule.trim()) {
-      blocks.push({ type: "p", text: `Current governing rule: ${note.currentRule.trim()}` });
+    if (hasText(note.currentRule)) {
+      blocks.push({ type: "p", text: "Current governing rule:" });
+      blocks.push({ type: "rich", html: note.currentRule });
     }
-    const tl = (note.timeline || []).filter((t) => t.caseName || t.development);
+    const tl = (note.timeline || []).filter((t) => hasText(t.caseName) || hasText(t.development));
     if (tl.length) {
       blocks.push({ type: "p", text: "History, oldest to newest:" });
       tl.forEach((t) =>
@@ -565,7 +599,7 @@ function noteToBlocks(note, idx) {
           type: "li",
           text: `${t.year ? `${t.year} — ` : ""}${t.caseName || "Untitled case"}${
             t.citation ? ` (${t.citation})` : ""
-          }${t.development ? `: ${t.development}` : ""}`,
+          }${hasText(t.development) ? `: ${htmlToPlain(t.development)}` : ""}`,
         })
       );
     }
@@ -573,30 +607,42 @@ function noteToBlocks(note, idx) {
     const name = note.caseName || "Untitled case";
     const cite = note.citation ? ` — ${note.citation}` : "";
     blocks.push({ type: "h4", text: `${idx}. ${name}${cite}` });
-    if (note.facts) blocks.push({ type: "p", text: `Facts: ${note.facts}` });
-    if (note.procHistory) blocks.push({ type: "p", text: `Procedural history: ${note.procHistory}` });
-    if (note.issue) blocks.push({ type: "p", text: `Issue: ${note.issue}` });
-    if (note.holding) blocks.push({ type: "p", text: `Holding: ${note.holding}` });
-    if (note.reasoning) blocks.push({ type: "p", text: `Reasoning: ${note.reasoning}` });
+    blocks.push(...labeledRich("Facts", note.facts));
+    blocks.push(...labeledRich("Procedural history", note.procHistory));
+    blocks.push(...labeledRich("Issue", note.issue));
+    blocks.push(...labeledRich("Holding", note.holding));
+    blocks.push(...labeledRich("Reasoning", note.reasoning));
+    if (note.includeDissent) {
+      blocks.push(...labeledRich("Dissenting opinion summary", note.dissentSummary));
+      blocks.push(...labeledRich("Significance of dissent", note.dissentSignificance));
+    }
   }
   blocks.push({ type: "space" });
   return blocks;
 }
 
-function weekToBlocks(week) {
-  const blocks = [{ type: "h2", text: `Week ${week.weekNum}` }];
-  blocks.push({ type: "h3", text: "Reading notes" });
-  if (week.readingNotes.length) {
-    week.readingNotes.forEach((n, i) => blocks.push(...noteToBlocks(n, i + 1)));
-  } else {
-    blocks.push({ type: "p", text: "No reading notes recorded." });
-  }
-  blocks.push({ type: "h3", text: "Lecture notes" });
-  blocks.push({ type: "p", text: `Class discussion: ${week.lecture.discussion || "—"}` });
-  blocks.push({ type: "p", text: `Professor's emphasis: ${week.lecture.emphasis || "—"}` });
-  blocks.push({ type: "p", text: `Key rules clarified: ${week.lecture.keyRules || "—"}` });
+function readingNotesToBlocks(week) {
+  const blocks = [{ type: "h2", text: weekLabel(week) }, { type: "h3", text: "Reading notes" }];
+  const notes = (week.readingNotes || []).filter(noteHasContent);
+  if (notes.length) notes.forEach((n, i) => blocks.push(...noteToBlocks(n, i + 1)));
+  else blocks.push({ type: "p", text: "No reading notes recorded." });
+  return blocks;
+}
+
+function lectureToBlocks(week) {
+  const blocks = [{ type: "h2", text: weekLabel(week) }, { type: "h3", text: "Lecture notes" }];
+  blocks.push({ type: "p", text: "Class discussion:" });
+  blocks.push({ type: "rich", html: week.lecture.discussion || "" });
+  blocks.push({ type: "p", text: "Professor's emphasis:" });
+  blocks.push({ type: "rich", html: week.lecture.emphasis || "" });
+  blocks.push({ type: "p", text: "Key rules clarified:" });
+  blocks.push({ type: "rich", html: week.lecture.keyRules || "" });
   blocks.push({ type: "space" });
   return blocks;
+}
+
+function weekToBlocks(week) {
+  return [...readingNotesToBlocks(week), { type: "space" }, ...lectureToBlocks(week)];
 }
 
 function outlineToBlocks(course) {
@@ -650,19 +696,25 @@ function blocksToHtml(blocks) {
     }
   };
   blocks.forEach((b) => {
+    if (b.type === "rich") {
+      closeList();
+      html += looksLikeHtml(b.html) ? b.html : `<p>${escapeHtml(htmlToPlain(b.html) || "—")}</p>`;
+      return;
+    }
     if (b.type === "li") {
       if (!inList) {
         html += "<ul>";
         inList = true;
       }
-      html += `<li>${escapeHtml(b.text)}</li>`;
+      html += `<li>${escapeHtml(htmlToPlain(b.text) || b.text || "")}</li>`;
       return;
     }
     closeList();
     if (b.type === "space") {
       html += `<div style="height:10pt"></div>`;
     } else {
-      html += `<${b.type}>${escapeHtml(b.text)}</${b.type}>`;
+      const inner = looksLikeHtml(b.text) ? b.text : escapeHtml(htmlToPlain(b.text) || b.text || "");
+      html += `<${b.type}>${inner}</${b.type}>`;
     }
   });
   closeList();
@@ -788,25 +840,57 @@ async function ensureFolder(cachedId, name, parentId) {
 
 // gapi.client.drive's generated methods accept a `media` option and handle the
 // multipart/media upload encoding internally — no manual multipart needed.
+function driveAccessToken() {
+  const token = window.gapi && window.gapi.client && window.gapi.client.getToken();
+  return token && token.access_token;
+}
+
+async function driveMultipart({ method, url, metadata, mimeType, body }) {
+  const token = driveAccessToken();
+  if (!token) throw new Error("Not signed in to Google Drive");
+  const boundary = "btc_boundary_" + Math.random().toString(16).slice(2);
+  const multipart =
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n${body}\r\n` +
+    `--${boundary}--`;
+  const res = await fetch(url, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": `multipart/related; boundary=${boundary}`,
+    },
+    body: multipart,
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(errText || `Drive upload failed (${res.status})`);
+  }
+  const text = await res.text();
+  return text ? JSON.parse(text) : {};
+}
+
 async function driveCreateFile(content, parentId) {
-  const res = await window.gapi.client.drive.files.create({
-    resource: {
+  return driveMultipart({
+    method: "POST",
+    url: "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
+    metadata: {
       name: DRIVE_FILE_NAME,
       mimeType: "application/json",
       parents: parentId ? [parentId] : undefined,
     },
-    media: { mimeType: "application/json", body: content },
-    fields: "id",
+    mimeType: "application/json",
+    body: content,
   });
-  return res.result;
 }
 
 async function driveUpdateFile(fileId, content) {
-  const res = await window.gapi.client.drive.files.update({
-    fileId,
-    media: { mimeType: "application/json", body: content },
+  return driveMultipart({
+    method: "PATCH",
+    url: `https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(fileId)}?uploadType=multipart`,
+    metadata: {},
+    mimeType: "application/json",
+    body: content,
   });
-  return res.result;
 }
 
 async function driveReadFileContent(fileId) {
@@ -833,23 +917,51 @@ function buildSimpleHtmlDoc(title, bodyHtml) {
 // re-converts (replacing the body) on update with fresh media — so a week's Doc
 // can be kept live just by re-uploading its compiled HTML each sync.
 async function driveCreateDoc(name, parentId, html) {
-  const res = await window.gapi.client.drive.files.create({
-    resource: {
+  const file = await driveMultipart({
+    method: "POST",
+    url: "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
+    metadata: {
       name,
       mimeType: "application/vnd.google-apps.document",
       parents: parentId ? [parentId] : undefined,
     },
-    media: { mimeType: "text/html", body: html },
-    fields: "id",
+    mimeType: "text/html",
+    body: html,
   });
-  return res.result.id;
+  return file.id;
 }
 
-async function driveUpdateDoc(fileId, html) {
-  await window.gapi.client.drive.files.update({
-    fileId,
-    media: { mimeType: "text/html", body: html },
+async function driveUpdateDoc(fileId, name, html) {
+  await driveMultipart({
+    method: "PATCH",
+    url: `https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(fileId)}?uploadType=multipart`,
+    metadata: name ? { name } : {},
+    mimeType: "text/html",
+    body: html,
   });
+}
+
+function weekDriveIds(cached) {
+  if (!cached) return { reading: null, lecture: null, combined: null };
+  if (typeof cached === "string") return { reading: null, lecture: null, combined: cached };
+  return {
+    reading: cached.reading || null,
+    lecture: cached.lecture || null,
+    combined: cached.combined || null,
+  };
+}
+
+function lectureHasContent(week) {
+  if (!week || !week.lecture) return false;
+  return [week.lecture.discussion, week.lecture.emphasis, week.lecture.keyRules].some(hasText);
+}
+
+async function upsertDriveDoc(cachedId, name, parentId, html) {
+  if (cachedId && (await driveItemExists(cachedId))) {
+    await driveUpdateDoc(cachedId, name, html);
+    return cachedId;
+  }
+  return driveCreateDoc(name, parentId, html);
 }
 
 // Full sync pass: ensures "Beat the Curve" > "<Course>" > "Week N" docs all exist
@@ -882,18 +994,34 @@ async function runDriveSync(data, mapIn) {
   for (const course of data.courses) {
     const existing = map.courses[course.id] || { folderId: null, weeks: {} };
     const folderId = await ensureFolder(existing.folderId, course.name, map.rootFolderId);
+    try {
+      await window.gapi.client.drive.files.update({
+        fileId: folderId,
+        resource: { name: course.name },
+        fields: "id",
+      });
+    } catch (e) {}
     const weeks = { ...existing.weeks };
 
     for (const week of course.weeks) {
-      if (!weekHasContent(week)) continue;
-      const docName = `Week ${week.weekNum}`;
-      const html = buildSimpleHtmlDoc(`${course.name} — ${docName}`, blocksToHtml(weekToBlocks(week)));
-      const cachedDocId = weeks[week.weekNum];
-      if (cachedDocId && (await driveItemExists(cachedDocId))) {
-        await driveUpdateDoc(cachedDocId, html);
-      } else {
-        weeks[week.weekNum] = await driveCreateDoc(docName, folderId, html);
+      const ids = weekDriveIds(weeks[week.weekNum]);
+      const label = weekLabel(week);
+      const nextIds = { ...ids };
+
+      if (week.readingNotes.some(noteHasContent)) {
+        const readingName = `${course.name} - ${label} - Reading Notes`;
+        const html = blocksToHtmlDocument(readingName, readingNotesToBlocks(week));
+        nextIds.reading = await upsertDriveDoc(ids.reading || ids.combined, readingName, folderId, html);
+        if (ids.combined && nextIds.reading === ids.combined) nextIds.combined = null;
       }
+
+      if (lectureHasContent(week)) {
+        const lectureName = `${course.name} - ${label} - Lecture Notes`;
+        const html = blocksToHtmlDocument(lectureName, lectureToBlocks(week));
+        nextIds.lecture = await upsertDriveDoc(ids.lecture, lectureName, folderId, html);
+      }
+
+      weeks[week.weekNum] = nextIds;
     }
 
     map.courses[course.id] = { folderId, weeks };
@@ -960,14 +1088,15 @@ async function blocksToPdfAndSave(blocks, filename) {
     }
     doc.setFont("times", fontStyle);
     doc.setFontSize(fontSize);
-    const cleanText = (prefix + (b.text || "")).replace(/\*\*/g, "").replace(/`/g, "");
+    const raw = b.type === "rich" ? htmlToPlain(b.html) : b.text || "";
+    const cleanText = (prefix + raw).replace(/\*\*/g, "").replace(/`/g, "");
     const lines = doc.splitTextToSize(cleanText, maxWidth - indent);
     lines.forEach((line) => {
       ensureSpace(lineGap);
       doc.text(line, marginX + indent, y);
       y += lineGap;
     });
-    if (b.type.startsWith("h")) y += 4;
+    if (b.type && String(b.type).startsWith("h")) y += 4;
   });
 
   doc.save(filename);
@@ -980,9 +1109,21 @@ function sanitizeFilename(name) {
 async function exportDoc({ blocks, baseName, format, showToast }) {
   const filenameBase = sanitizeFilename(baseName);
   if (format === "word") {
-    const html = buildWordHtml(baseName, blocksToHtml(blocks));
-    downloadBlob(`${filenameBase}.doc`, "application/msword", html);
-    if (showToast) showToast("Word document downloaded");
+    try {
+      if (showToast) showToast("Preparing Word document…");
+      const blob = await blocksToDocxBlob(blocks);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${filenameBase}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      if (showToast) showToast("Word document downloaded");
+    } catch (e) {
+      if (showToast) showToast("Couldn't build the Word file — try PDF instead");
+    }
   } else {
     if (showToast) showToast("Preparing PDF…");
     try {
@@ -1020,7 +1161,7 @@ function DownloadMenu({ label = "Download", buildBlocks, baseName, showToast }) 
       {open && (
         <div className="btc-download-menu">
           <button className="btc-download-option" onClick={() => handle("word")}>
-            <FileText size={14} /> Word document (.doc)
+            <FileText size={14} /> Word document (.docx)
           </button>
           <button className="btc-download-option" onClick={() => handle("pdf")}>
             <FileDown size={14} /> PDF
@@ -1044,8 +1185,16 @@ function Field({ label, children }) {
   );
 }
 
-function TextArea(props) {
-  return <textarea className="btc-textarea" spellCheck="false" {...props} />;
+function TextArea({ value, onChange, placeholder, rows = 3, className = "" }) {
+  return (
+    <RichTextField
+      value={value}
+      onChange={(html) => onChange && onChange({ target: { value: html } })}
+      placeholder={placeholder}
+      minHeight={Math.max(64, Number(rows || 3) * 24)}
+      className={className}
+    />
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -1136,6 +1285,36 @@ function CaseBriefCard({ index, data, onChange, onDelete, onOutline, onPrewrite,
             onChange={(e) => onChange({ ...data, reasoning: e.target.value })}
           />
         </Field>
+        <div className="btc-dissent-wrap">
+          <label className="btc-dissent-toggle">
+            <input
+              type="checkbox"
+              checked={Boolean(data.includeDissent)}
+              onChange={(e) => onChange({ ...data, includeDissent: e.target.checked })}
+            />
+            Include dissenting opinion
+          </label>
+          {data.includeDissent && (
+            <div className="btc-dissent-fields">
+              <Field label="Dissenting opinion summary">
+                <TextArea
+                  rows={3}
+                  placeholder="The dissent's core argument..."
+                  value={data.dissentSummary || ""}
+                  onChange={(e) => onChange({ ...data, dissentSummary: e.target.value })}
+                />
+              </Field>
+              <Field label="Significance of dissent">
+                <TextArea
+                  rows={3}
+                  placeholder="Why this dissent matters for exams or how the doctrine later evolved..."
+                  value={data.dissentSignificance || ""}
+                  onChange={(e) => onChange({ ...data, dissentSignificance: e.target.value })}
+                />
+              </Field>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1459,12 +1638,19 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
       <div className="btc-week-heading btc-heading-row">
         <div>
           <span className="btc-week-eyebrow">{course.name}</span>
-          <h1 className="btc-h1">Week {weekNum}</h1>
+          <input
+            className="btc-h1 btc-week-title-input"
+            value={week.title || `Week ${weekNum}`}
+            onChange={(e) => updateWeek(weekNum, { ...week, title: e.target.value })}
+            aria-label="Week name"
+          />
         </div>
         <DownloadMenu
           label="Download week"
-          baseName={`${course.name} — Week ${weekNum}`}
-          buildBlocks={() => weekToBlocks(week)}
+          baseName={`${course.name} - ${weekLabel(week)} - ${
+            weekTab === "lecture" ? "Lecture Notes" : "Reading Notes"
+          }`}
+          buildBlocks={() => (weekTab === "lecture" ? lectureToBlocks(week) : readingNotesToBlocks(week))}
           showToast={showToast}
         />
       </div>
