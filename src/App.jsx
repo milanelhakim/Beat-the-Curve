@@ -28,12 +28,16 @@ import {
   CloudOff,
   ExternalLink,
   RefreshCw,
+  Bold,
+  Italic,
+  Underline,
+  List,
+  ListOrdered,
+  Palette,
+  Highlighter,
   Sun,
   Moon,
 } from "lucide-react";
-import RichTextField from "./RichTextField.jsx";
-import { htmlToPlain, hasText, weekLabel, looksLikeHtml } from "./htmlUtils.js";
-import { blocksToDocxBlob, blocksToHtmlDocument } from "./docxExport.js";
 
 /* ------------------------------------------------------------------ */
 /*  Constants & helpers                                                */
@@ -41,8 +45,11 @@ import { blocksToDocxBlob, blocksToHtmlDocument } from "./docxExport.js";
 
 const WEEK_COUNT = 12;
 const STORAGE_KEY = "beat-the-curve-data-v1";
-const THEME_KEY = "beat-the-curve-theme";
-const SCHEMA_VERSION = 1;
+// v1: initial shape.
+// v2: added week.title (editable tab labels) and case-brief dissent fields
+//     (includeDissent, dissentSummary, dissentSignificance). Both are additive —
+//     hydrate* below fills them in with safe defaults on any older saved data.
+const SCHEMA_VERSION = 2;
 
 /*
  * Google Drive sync config.
@@ -67,6 +74,7 @@ const DRIVE_WAS_CONNECTED_KEY = "beat-the-curve-drive-connected";
 const DRIVE_ROOT_FOLDER_NAME = "Beat the Curve";
 const DRIVE_MAP_KEY = "beat-the-curve-drive-map";
 const DRIVE_SYNC_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
+const DARK_MODE_KEY = "beat-the-curve-dark-mode";
 
 const COMMON_COURSES = [
   "Torts",
@@ -86,10 +94,15 @@ function uid(prefix = "id") {
 function makeWeek(weekNum) {
   return {
     weekNum,
-    title: `Week ${weekNum}`,
+    title: "",
     readingNotes: [],
     lecture: { discussion: "", emphasis: "", keyRules: "" },
   };
+}
+
+function weekLabel(week) {
+  if (!week) return "";
+  return week.title && week.title.trim() ? `Week ${week.weekNum}: ${week.title.trim()}` : `Week ${week.weekNum}`;
 }
 
 function makeCourse(name) {
@@ -241,7 +254,7 @@ function hydrateNote(n) {
     issue: typeof n.issue === "string" ? n.issue : "",
     holding: typeof n.holding === "string" ? n.holding : "",
     reasoning: typeof n.reasoning === "string" ? n.reasoning : "",
-    includeDissent: Boolean(n.includeDissent),
+    includeDissent: !!n.includeDissent,
     dissentSummary: typeof n.dissentSummary === "string" ? n.dissentSummary : "",
     dissentSignificance: typeof n.dissentSignificance === "string" ? n.dissentSignificance : "",
   };
@@ -259,12 +272,9 @@ function hydrateLecture(l) {
 
 function hydrateWeek(w, weekNum) {
   if (!w || typeof w !== "object") return makeWeek(weekNum);
-  const defaultTitle = `Week ${weekNum}`;
-  const title =
-    typeof w.title === "string" && w.title.trim() ? w.title.trim() : defaultTitle;
   return {
     weekNum,
-    title,
+    title: typeof w.title === "string" ? w.title : "",
     readingNotes: Array.isArray(w.readingNotes) ? w.readingNotes.map(hydrateNote) : [],
     lecture: hydrateLecture(w.lecture),
   };
@@ -317,37 +327,99 @@ function hydrateData(raw) {
   return { schemaVersion: SCHEMA_VERSION, courses };
 }
 
+/* ------------------------------------------------------------------ */
+/*  Rich-text (HTML) helpers                                            */
+/*  Facts/Issue/Holding/Reasoning, concept summaries, evolution rules,   */
+/*  lecture notes, outline sections, and prewrite content are all now   */
+/*  stored as HTML from the rich-text editor rather than plain strings. */
+/* ------------------------------------------------------------------ */
+
+function stripHtml(html) {
+  if (!html) return "";
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  return container.textContent || "";
+}
+
+function htmlIsBlank(html) {
+  return stripHtml(html).trim().length === 0;
+}
+
+function htmlToPlainText(html) {
+  if (!html) return "";
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  container.querySelectorAll("br").forEach((br) => br.replaceWith("\n"));
+  container.querySelectorAll("p,div,li,h1,h2,h3,h4").forEach((el) => {
+    el.insertAdjacentText("beforeend", "\n");
+  });
+  return (container.textContent || "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+// Converts stored rich-text HTML into the same {type,text} block model used
+// for exports, so headings/bullets a student typed with the toolbar survive
+// into Word/PDF/Drive Doc output.
+function htmlToBlocks(html) {
+  if (!html || htmlIsBlank(html)) return [{ type: "p", text: "Nothing written yet." }];
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  const blocks = [];
+  const pushText = (type, text) => {
+    const t = (text || "").replace(/\s+/g, " ").trim();
+    if (t) blocks.push({ type, text: t });
+  };
+  const walk = (node) => {
+    node.childNodes.forEach((child) => {
+      if (child.nodeType === 3) {
+        pushText("p", child.textContent);
+        return;
+      }
+      if (child.nodeType !== 1) return;
+      const tag = child.tagName.toLowerCase();
+      if (tag === "h1" || tag === "h2") pushText("h3", child.textContent);
+      else if (tag === "h3" || tag === "h4") pushText("h4", child.textContent);
+      else if (tag === "ul" || tag === "ol") {
+        child.querySelectorAll("li").forEach((li) => pushText("li", li.textContent));
+      } else if (tag === "li") pushText("li", child.textContent);
+      else if (tag === "p" || tag === "div") pushText("p", child.textContent);
+      else pushText("p", child.textContent);
+    });
+  };
+  walk(container);
+  return blocks.length ? blocks : [{ type: "p", text: "Nothing written yet." }];
+}
+
 function noteHasContent(note) {
   if (!note) return false;
   if (note.type === "concept") {
-    const own = [note.title, note.summary].some(hasText);
-    const cases = (note.cases || []).some((c) => [c.caseName, c.citation, c.note].some(hasText));
+    const own = (note.title && note.title.trim()) || !htmlIsBlank(note.summary);
+    const cases = (note.cases || []).some((c) =>
+      [c.caseName, c.citation, c.note].some((v) => v && v.trim())
+    );
     return own || cases;
   }
   if (note.type === "evolution") {
-    const own = [note.title, note.currentRule].some(hasText);
+    const own = (note.title && note.title.trim()) || !htmlIsBlank(note.currentRule);
     const tl = (note.timeline || []).some((t) =>
-      [t.caseName, t.citation, t.year, t.development].some(hasText)
+      [t.caseName, t.citation, t.year, t.development].some((v) => v && v.trim())
     );
     return own || tl;
   }
-  return [
-    note.caseName,
-    note.citation,
-    note.facts,
-    note.procHistory,
-    note.issue,
-    note.holding,
-    note.reasoning,
-    note.dissentSummary,
-    note.dissentSignificance,
-  ].some(hasText);
+  // brief (default/legacy)
+  const core = [note.caseName, note.citation].some((v) => v && v.trim());
+  const rich = [note.facts, note.procHistory, note.issue, note.holding, note.reasoning].some(
+    (v) => !htmlIsBlank(v)
+  );
+  const dissent = note.includeDissent && (!htmlIsBlank(note.dissentSummary) || !htmlIsBlank(note.dissentSignificance));
+  return core || rich || dissent;
 }
 
 function weekHasContent(week) {
   if (!week) return false;
   const hasNote = week.readingNotes.some(noteHasContent);
-  const hasLecture = [week.lecture.discussion, week.lecture.emphasis, week.lecture.keyRules].some(hasText);
+  const hasLecture = [week.lecture.discussion, week.lecture.emphasis, week.lecture.keyRules].some(
+    (v) => !htmlIsBlank(v)
+  );
   return hasNote || hasLecture;
 }
 
@@ -355,22 +427,22 @@ function compileNoteContent(note) {
   if (!noteHasContent(note)) return "";
   if (note.type === "concept") {
     const lines = [`### Concept: ${note.title || "Untitled concept"}`];
-    if (hasText(note.summary)) lines.push(htmlToPlain(note.summary));
+    if (!htmlIsBlank(note.summary)) lines.push(htmlToPlainText(note.summary));
     const cases = (note.cases || []).filter((c) => c.caseName || c.note);
     if (cases.length) {
       lines.push("");
       lines.push("Authorities:");
       cases.forEach((c) => {
         const cite = c.citation ? ` (${c.citation})` : "";
-        lines.push(`- **${c.caseName || "Untitled case"}${cite}**${c.note ? ` — ${htmlToPlain(c.note)}` : ""}`);
+        lines.push(`- **${c.caseName || "Untitled case"}${cite}**${c.note ? ` — ${c.note}` : ""}`);
       });
     }
     return lines.join("\n");
   }
   if (note.type === "evolution") {
     const lines = [`### Evolution of law: ${note.title || "Untitled doctrine"}`];
-    if (hasText(note.currentRule)) {
-      lines.push(`**Current rule:** ${htmlToPlain(note.currentRule)}`);
+    if (!htmlIsBlank(note.currentRule)) {
+      lines.push(`**Current rule:** ${htmlToPlainText(note.currentRule)}`);
     }
     const tl = (note.timeline || []).filter((t) => t.caseName || t.development);
     if (tl.length) {
@@ -379,7 +451,7 @@ function compileNoteContent(note) {
       tl.forEach((t) => {
         const cite = t.citation ? ` (${t.citation})` : "";
         const year = t.year ? `${t.year} — ` : "";
-        lines.push(`- ${year}**${t.caseName || "Untitled case"}${cite}**${t.development ? `: ${htmlToPlain(t.development)}` : ""}`);
+        lines.push(`- ${year}**${t.caseName || "Untitled case"}${cite}**${t.development ? `: ${t.development}` : ""}`);
       });
     }
     return lines.join("\n");
@@ -387,11 +459,14 @@ function compileNoteContent(note) {
   // brief
   const name = note.caseName || "Untitled case";
   const cite = note.citation ? ` (${note.citation})` : "";
-  const lines = [`- **${name}${cite}** — ${hasText(note.holding) ? htmlToPlain(note.holding) : "[holding not yet noted]"}`];
-  if (hasText(note.reasoning)) lines.push(`  ${htmlToPlain(note.reasoning)}`);
-  if (note.includeDissent && (hasText(note.dissentSummary) || hasText(note.dissentSignificance))) {
-    if (hasText(note.dissentSummary)) lines.push(`  Dissent: ${htmlToPlain(note.dissentSummary)}`);
-    if (hasText(note.dissentSignificance)) lines.push(`  Significance of dissent: ${htmlToPlain(note.dissentSignificance)}`);
+  const holdingText = htmlIsBlank(note.holding) ? "[holding not yet noted]" : htmlToPlainText(note.holding);
+  const lines = [`- **${name}${cite}** — ${holdingText}`];
+  if (!htmlIsBlank(note.reasoning)) lines.push(`  ${htmlToPlainText(note.reasoning)}`);
+  if (note.includeDissent && (!htmlIsBlank(note.dissentSummary) || !htmlIsBlank(note.dissentSignificance))) {
+    if (!htmlIsBlank(note.dissentSummary)) lines.push(`  Dissent: ${htmlToPlainText(note.dissentSummary)}`);
+    if (!htmlIsBlank(note.dissentSignificance)) {
+      lines.push(`  Why the dissent matters: ${htmlToPlainText(note.dissentSignificance)}`);
+    }
   }
   return lines.join("\n");
 }
@@ -412,19 +487,19 @@ function compileWeekContent(week) {
   });
 
   const { discussion, emphasis, keyRules } = week.lecture;
-  if (hasText(keyRules)) {
+  if (keyRules && keyRules.trim()) {
     lines.push(`### Key rules from lecture`);
-    lines.push(htmlToPlain(keyRules));
+    lines.push(keyRules.trim());
     lines.push("");
   }
-  if (hasText(emphasis)) {
+  if (emphasis && emphasis.trim()) {
     lines.push(`### Professor's emphasis`);
-    lines.push(htmlToPlain(emphasis));
+    lines.push(emphasis.trim());
     lines.push("");
   }
-  if (hasText(discussion)) {
+  if (discussion && discussion.trim()) {
     lines.push(`### Class discussion`);
-    lines.push(htmlToPlain(discussion));
+    lines.push(discussion.trim());
     lines.push("");
   }
   return lines.join("\n").trim();
@@ -452,12 +527,12 @@ function buildPrewriteFromNote(note) {
     note.type === "brief"
       ? note.caseName || "Untitled attack outline"
       : note.title || "Untitled attack outline";
-  const ruleSeed = note.type === "brief" ? note.holding : note.type === "concept" ? note.summary : note.currentRule;
+  const rawSeed = note.type === "brief" ? note.holding : note.type === "concept" ? note.summary : note.currentRule;
+  const ruleSeed = htmlIsBlank(rawSeed) ? "" : htmlToPlainText(rawSeed);
   const authorities = buildAuthoritiesList(note);
-  const rulePlain = htmlToPlain(ruleSeed);
   const content = `## ${title}
 
-**Rule:** ${rulePlain ? rulePlain : "[State the governing rule or elements]"}`
+**Rule:** ${ruleSeed || "[State the governing rule or elements]"}
 
 **Application:** [Insert Name of Accused/Party] arguably [insert defendant's action] when [insert conduct] occurred on [Insert Date/Location]. This element is [satisfied / not satisfied] because [tie reasoning to the rule].
 
@@ -466,7 +541,7 @@ function buildPrewriteFromNote(note) {
 **Conclusion:** A court would likely find that [insert predicted outcome].${
     authorities ? `\n\n**Authorities:**\n${authorities}` : ""
   }`;
-  return makePrewrite({ title, content });
+  return makePrewrite({ title, content: renderMdLite(content) });
 }
 
 function iracTemplate() {
@@ -560,38 +635,29 @@ function mdToBlocks(raw) {
   return blocks;
 }
 
-function labeledRich(label, html) {
-  if (!hasText(html)) return [];
-  return [
-    { type: "p", text: `${label}:` },
-    { type: "rich", html },
-  ];
-}
-
 function noteToBlocks(note, idx) {
   const blocks = [];
   if (note.type === "concept") {
     blocks.push({ type: "h4", text: `${idx}. Concept: ${note.title || "Untitled concept"}` });
-    if (hasText(note.summary)) blocks.push({ type: "rich", html: note.summary });
-    const cases = (note.cases || []).filter((c) => hasText(c.caseName) || hasText(c.note));
+    if (!htmlIsBlank(note.summary)) blocks.push({ type: "p", text: htmlToPlainText(note.summary) });
+    const cases = (note.cases || []).filter((c) => c.caseName || c.note);
     if (cases.length) {
       blocks.push({ type: "p", text: "Linked cases:" });
       cases.forEach((c) =>
         blocks.push({
           type: "li",
           text: `${c.caseName || "Untitled case"}${c.citation ? ` (${c.citation})` : ""}${
-            hasText(c.note) ? ` — ${htmlToPlain(c.note)}` : ""
+            c.note ? ` — ${c.note}` : ""
           }`,
         })
       );
     }
   } else if (note.type === "evolution") {
     blocks.push({ type: "h4", text: `${idx}. Evolution of law: ${note.title || "Untitled doctrine"}` });
-    if (hasText(note.currentRule)) {
-      blocks.push({ type: "p", text: "Current governing rule:" });
-      blocks.push({ type: "rich", html: note.currentRule });
+    if (!htmlIsBlank(note.currentRule)) {
+      blocks.push({ type: "p", text: `Current governing rule: ${htmlToPlainText(note.currentRule)}` });
     }
-    const tl = (note.timeline || []).filter((t) => hasText(t.caseName) || hasText(t.development));
+    const tl = (note.timeline || []).filter((t) => t.caseName || t.development);
     if (tl.length) {
       blocks.push({ type: "p", text: "History, oldest to newest:" });
       tl.forEach((t) =>
@@ -599,7 +665,7 @@ function noteToBlocks(note, idx) {
           type: "li",
           text: `${t.year ? `${t.year} — ` : ""}${t.caseName || "Untitled case"}${
             t.citation ? ` (${t.citation})` : ""
-          }${hasText(t.development) ? `: ${htmlToPlain(t.development)}` : ""}`,
+          }${t.development ? `: ${t.development}` : ""}`,
         })
       );
     }
@@ -607,42 +673,62 @@ function noteToBlocks(note, idx) {
     const name = note.caseName || "Untitled case";
     const cite = note.citation ? ` — ${note.citation}` : "";
     blocks.push({ type: "h4", text: `${idx}. ${name}${cite}` });
-    blocks.push(...labeledRich("Facts", note.facts));
-    blocks.push(...labeledRich("Procedural history", note.procHistory));
-    blocks.push(...labeledRich("Issue", note.issue));
-    blocks.push(...labeledRich("Holding", note.holding));
-    blocks.push(...labeledRich("Reasoning", note.reasoning));
-    if (note.includeDissent) {
-      blocks.push(...labeledRich("Dissenting opinion summary", note.dissentSummary));
-      blocks.push(...labeledRich("Significance of dissent", note.dissentSignificance));
+    if (!htmlIsBlank(note.facts)) blocks.push({ type: "p", text: `Facts: ${htmlToPlainText(note.facts)}` });
+    if (!htmlIsBlank(note.procHistory))
+      blocks.push({ type: "p", text: `Procedural history: ${htmlToPlainText(note.procHistory)}` });
+    if (!htmlIsBlank(note.issue)) blocks.push({ type: "p", text: `Issue: ${htmlToPlainText(note.issue)}` });
+    if (!htmlIsBlank(note.holding)) blocks.push({ type: "p", text: `Holding: ${htmlToPlainText(note.holding)}` });
+    if (!htmlIsBlank(note.reasoning))
+      blocks.push({ type: "p", text: `Reasoning: ${htmlToPlainText(note.reasoning)}` });
+    if (note.includeDissent && (!htmlIsBlank(note.dissentSummary) || !htmlIsBlank(note.dissentSignificance))) {
+      if (!htmlIsBlank(note.dissentSummary)) {
+        blocks.push({ type: "p", text: `Dissenting opinion: ${htmlToPlainText(note.dissentSummary)}` });
+      }
+      if (!htmlIsBlank(note.dissentSignificance)) {
+        blocks.push({ type: "p", text: `Significance of dissent: ${htmlToPlainText(note.dissentSignificance)}` });
+      }
     }
   }
   blocks.push({ type: "space" });
   return blocks;
 }
 
-function readingNotesToBlocks(week) {
-  const blocks = [{ type: "h2", text: weekLabel(week) }, { type: "h3", text: "Reading notes" }];
-  const notes = (week.readingNotes || []).filter(noteHasContent);
-  if (notes.length) notes.forEach((n, i) => blocks.push(...noteToBlocks(n, i + 1)));
-  else blocks.push({ type: "p", text: "No reading notes recorded." });
+function readingNotesBlocks(week) {
+  const blocks = [];
+  if (week.readingNotes.length) {
+    week.readingNotes.forEach((n, i) => blocks.push(...noteToBlocks(n, i + 1)));
+  } else {
+    blocks.push({ type: "p", text: "No reading notes recorded." });
+  }
   return blocks;
 }
 
-function lectureToBlocks(week) {
-  const blocks = [{ type: "h2", text: weekLabel(week) }, { type: "h3", text: "Lecture notes" }];
-  blocks.push({ type: "p", text: "Class discussion:" });
-  blocks.push({ type: "rich", html: week.lecture.discussion || "" });
-  blocks.push({ type: "p", text: "Professor's emphasis:" });
-  blocks.push({ type: "rich", html: week.lecture.emphasis || "" });
-  blocks.push({ type: "p", text: "Key rules clarified:" });
-  blocks.push({ type: "rich", html: week.lecture.keyRules || "" });
+function lectureBlocks(week) {
+  return [
+    { type: "p", text: `Class discussion: ${htmlIsBlank(week.lecture.discussion) ? "—" : htmlToPlainText(week.lecture.discussion)}` },
+    { type: "p", text: `Professor's emphasis: ${htmlIsBlank(week.lecture.emphasis) ? "—" : htmlToPlainText(week.lecture.emphasis)}` },
+    { type: "p", text: `Key rules clarified: ${htmlIsBlank(week.lecture.keyRules) ? "—" : htmlToPlainText(week.lecture.keyRules)}` },
+  ];
+}
+
+function weekToBlocks(week) {
+  const blocks = [{ type: "h2", text: weekLabel(week) }];
+  blocks.push({ type: "h3", text: "Reading notes" });
+  blocks.push(...readingNotesBlocks(week));
+  blocks.push({ type: "h3", text: "Lecture notes" });
+  blocks.push(...lectureBlocks(week));
   blocks.push({ type: "space" });
   return blocks;
 }
 
-function weekToBlocks(week) {
-  return [...readingNotesToBlocks(week), { type: "space" }, ...lectureToBlocks(week)];
+// Per-tab exports, so a student can download just the Reading Notes or just the
+// Lecture Notes for a week as its own file (e.g. "Torts - Week 1 - Reading Notes").
+function weekReadingBlocks(course, week) {
+  return [{ type: "h1", text: `${course.name} — ${weekLabel(week)} — Reading Notes` }, { type: "space" }, ...readingNotesBlocks(week)];
+}
+
+function weekLectureBlocks(course, week) {
+  return [{ type: "h1", text: `${course.name} — ${weekLabel(week)} — Lecture Notes` }, { type: "space" }, ...lectureBlocks(week)];
 }
 
 function outlineToBlocks(course) {
@@ -650,7 +736,7 @@ function outlineToBlocks(course) {
   if (course.outline.length) {
     course.outline.forEach((s, i) => {
       blocks.push({ type: "h3", text: `${i + 1}. ${s.title || "Untitled section"}` });
-      blocks.push(...mdToBlocks(s.content));
+      blocks.push(...htmlToBlocks(s.content));
       blocks.push({ type: "space" });
     });
   } else {
@@ -664,7 +750,7 @@ function prewritesToBlocks(course) {
   if (course.prewrites.length) {
     course.prewrites.forEach((p, i) => {
       blocks.push({ type: "h3", text: `${i + 1}. ${p.title || "Untitled attack outline"}` });
-      blocks.push(...mdToBlocks(p.content));
+      blocks.push(...htmlToBlocks(p.content));
       blocks.push({ type: "space" });
     });
   } else {
@@ -696,52 +782,87 @@ function blocksToHtml(blocks) {
     }
   };
   blocks.forEach((b) => {
-    if (b.type === "rich") {
-      closeList();
-      html += looksLikeHtml(b.html) ? b.html : `<p>${escapeHtml(htmlToPlain(b.html) || "—")}</p>`;
-      return;
-    }
     if (b.type === "li") {
       if (!inList) {
         html += "<ul>";
         inList = true;
       }
-      html += `<li>${escapeHtml(htmlToPlain(b.text) || b.text || "")}</li>`;
+      html += `<li>${escapeHtml(b.text)}</li>`;
       return;
     }
     closeList();
     if (b.type === "space") {
       html += `<div style="height:10pt"></div>`;
     } else {
-      const inner = looksLikeHtml(b.text) ? b.text : escapeHtml(htmlToPlain(b.text) || b.text || "");
-      html += `<${b.type}>${inner}</${b.type}>`;
+      html += `<${b.type}>${escapeHtml(b.text)}</${b.type}>`;
     }
   });
   closeList();
   return html;
 }
 
-function buildWordHtml(title, bodyHtml) {
-  return `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-<head>
-<meta charset="utf-8">
-<title>${escapeHtml(title)}</title>
-<!--[if gte mso 9]>
-<xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml>
-<![endif]-->
-<style>
-  body { font-family: Georgia, 'Times New Roman', serif; color: #211D17; font-size: 12pt; line-height: 1.5; }
-  h1 { font-size: 20pt; margin: 0 0 6pt; }
-  h2 { font-size: 15pt; margin: 20pt 0 6pt; border-bottom: 1pt solid #cccccc; padding-bottom: 4pt; }
-  h3 { font-size: 13pt; margin: 14pt 0 4pt; }
-  h4 { font-size: 11.5pt; margin: 10pt 0 3pt; }
-  p { margin: 0 0 6pt; }
-  ul { margin: 0 0 8pt 18pt; padding: 0; }
-  li { margin-bottom: 3pt; }
-</style>
-</head>
-<body>${bodyHtml}</body>
-</html>`;
+let docxLibPromise = null;
+function loadDocxLib() {
+  if (!docxLibPromise) {
+    docxLibPromise = import("https://cdn.jsdelivr.net/npm/docx@8.5.0/+esm");
+  }
+  return docxLibPromise;
+}
+
+function blocksToDocxParagraphs(docxLib, blocks) {
+  const { Paragraph, TextRun, HeadingLevel } = docxLib;
+  const paragraphs = [];
+  blocks.forEach((b) => {
+    if (b.type === "space") {
+      paragraphs.push(new Paragraph({ text: "" }));
+      return;
+    }
+    const cleanText = (b.text || "").replace(/\*\*/g, "").replace(/`/g, "");
+    if (b.type === "h1") {
+      paragraphs.push(
+        new Paragraph({ text: cleanText, heading: HeadingLevel.HEADING_1, spacing: { before: 240, after: 120 } })
+      );
+    } else if (b.type === "h2") {
+      paragraphs.push(
+        new Paragraph({ text: cleanText, heading: HeadingLevel.HEADING_2, spacing: { before: 200, after: 100 } })
+      );
+    } else if (b.type === "h3") {
+      paragraphs.push(
+        new Paragraph({ text: cleanText, heading: HeadingLevel.HEADING_3, spacing: { before: 160, after: 80 } })
+      );
+    } else if (b.type === "h4") {
+      paragraphs.push(
+        new Paragraph({
+          children: [new TextRun({ text: cleanText, bold: true })],
+          spacing: { before: 120, after: 60 },
+        })
+      );
+    } else if (b.type === "li") {
+      paragraphs.push(new Paragraph({ text: cleanText, bullet: { level: 0 } }));
+    } else {
+      paragraphs.push(new Paragraph({ text: cleanText, spacing: { after: 80 } }));
+    }
+  });
+  return paragraphs;
+}
+
+async function blocksToDocxAndSave(blocks, title, filename) {
+  const docxLib = await loadDocxLib();
+  const { Document, Packer, Paragraph, HeadingLevel } = docxLib;
+  const paragraphs = [
+    new Paragraph({ text: title, heading: HeadingLevel.TITLE, spacing: { after: 240 } }),
+    ...blocksToDocxParagraphs(docxLib, blocks),
+  ];
+  const doc = new Document({ sections: [{ children: paragraphs }] });
+  const blob = await Packer.toBlob(doc);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
 function downloadBlob(filename, mime, content) {
@@ -838,59 +959,67 @@ async function ensureFolder(cachedId, name, parentId) {
   return driveCreateFolder(name, parentId);
 }
 
-// gapi.client.drive's generated methods accept a `media` option and handle the
-// multipart/media upload encoding internally — no manual multipart needed.
-function driveAccessToken() {
+function getDriveAccessToken() {
   const token = window.gapi && window.gapi.client && window.gapi.client.getToken();
-  return token && token.access_token;
+  return token ? token.access_token : null;
 }
 
-async function driveMultipart({ method, url, metadata, mimeType, body }) {
-  const token = driveAccessToken();
-  if (!token) throw new Error("Not signed in to Google Drive");
-  const boundary = "btc_boundary_" + Math.random().toString(16).slice(2);
-  const multipart =
-    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
-    `--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n${body}\r\n` +
+// gapi.client's `media` convenience parameter for files.create/update is
+// inconsistent for HTML-to-Docs conversion uploads in practice — this uses the
+// documented multipart/related upload endpoint directly with fetch instead,
+// which is the reliable path (and is why folders were appearing without docs).
+async function driveMultipartCreate(metadata, mimeType, content) {
+  const token = getDriveAccessToken();
+  if (!token) throw new Error("No Drive access token");
+  const boundary = "btc_" + Math.random().toString(36).slice(2);
+  const body =
+    `--${boundary}\r\n` +
+    `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+    `${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\n` +
+    `Content-Type: ${mimeType}; charset=UTF-8\r\n\r\n` +
+    `${content}\r\n` +
     `--${boundary}--`;
-  const res = await fetch(url, {
-    method,
+  const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id", {
+    method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": `multipart/related; boundary=${boundary}`,
     },
-    body: multipart,
+    body,
   });
   if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(errText || `Drive upload failed (${res.status})`);
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Drive create failed (${res.status}): ${errText}`);
   }
-  const text = await res.text();
-  return text ? JSON.parse(text) : {};
+  return res.json();
+}
+
+async function driveMediaUpdate(fileId, mimeType, content) {
+  const token = getDriveAccessToken();
+  if (!token) throw new Error("No Drive access token");
+  const res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": mimeType,
+    },
+    body: content,
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Drive update failed (${res.status}): ${errText}`);
+  }
+  return res.json();
 }
 
 async function driveCreateFile(content, parentId) {
-  return driveMultipart({
-    method: "POST",
-    url: "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
-    metadata: {
-      name: DRIVE_FILE_NAME,
-      mimeType: "application/json",
-      parents: parentId ? [parentId] : undefined,
-    },
-    mimeType: "application/json",
-    body: content,
-  });
+  const metadata = { name: DRIVE_FILE_NAME, mimeType: "application/json", parents: parentId ? [parentId] : undefined };
+  return driveMultipartCreate(metadata, "application/json", content);
 }
 
 async function driveUpdateFile(fileId, content) {
-  return driveMultipart({
-    method: "PATCH",
-    url: `https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(fileId)}?uploadType=multipart`,
-    metadata: {},
-    mimeType: "application/json",
-    body: content,
-  });
+  return driveMediaUpdate(fileId, "application/json", content);
 }
 
 async function driveReadFileContent(fileId) {
@@ -917,58 +1046,29 @@ function buildSimpleHtmlDoc(title, bodyHtml) {
 // re-converts (replacing the body) on update with fresh media — so a week's Doc
 // can be kept live just by re-uploading its compiled HTML each sync.
 async function driveCreateDoc(name, parentId, html) {
-  const file = await driveMultipart({
-    method: "POST",
-    url: "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
-    metadata: {
-      name,
-      mimeType: "application/vnd.google-apps.document",
-      parents: parentId ? [parentId] : undefined,
-    },
-    mimeType: "text/html",
-    body: html,
-  });
-  return file.id;
-}
-
-async function driveUpdateDoc(fileId, name, html) {
-  await driveMultipart({
-    method: "PATCH",
-    url: `https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(fileId)}?uploadType=multipart`,
-    metadata: name ? { name } : {},
-    mimeType: "text/html",
-    body: html,
-  });
-}
-
-function weekDriveIds(cached) {
-  if (!cached) return { reading: null, lecture: null, combined: null };
-  if (typeof cached === "string") return { reading: null, lecture: null, combined: cached };
-  return {
-    reading: cached.reading || null,
-    lecture: cached.lecture || null,
-    combined: cached.combined || null,
+  const metadata = {
+    name,
+    mimeType: "application/vnd.google-apps.document",
+    parents: parentId ? [parentId] : undefined,
   };
+  const result = await driveMultipartCreate(metadata, "text/html", html);
+  return result.id;
 }
 
-function lectureHasContent(week) {
-  if (!week || !week.lecture) return false;
-  return [week.lecture.discussion, week.lecture.emphasis, week.lecture.keyRules].some(hasText);
-}
-
-async function upsertDriveDoc(cachedId, name, parentId, html) {
-  if (cachedId && (await driveItemExists(cachedId))) {
-    await driveUpdateDoc(cachedId, name, html);
-    return cachedId;
-  }
-  return driveCreateDoc(name, parentId, html);
+async function driveUpdateDoc(fileId, html) {
+  await driveMediaUpdate(fileId, "text/html", html);
 }
 
 // Full sync pass: ensures "Beat the Curve" > "<Course>" > "Week N" docs all exist
 // and are current, plus a JSON backup file for reliable full-fidelity restore.
-// Returns the updated map so the caller can persist it and refresh the UI.
+// Every step is individually try/caught so one failing item (e.g. a single week's
+// Doc upload) can't abort the rest of the sync — previously a single throw here
+// would abandon the whole pass mid-loop, which is why a course folder could end
+// up created with no week docs inside it. Returns { map, hadError } so the caller
+// can persist whatever succeeded and still surface that something needs retrying.
 async function runDriveSync(data, mapIn) {
   const map = { ...mapIn, courses: { ...mapIn.courses } };
+  let hadError = false;
 
   map.rootFolderId = await ensureFolder(map.rootFolderId, DRIVE_ROOT_FOLDER_NAME, null);
 
@@ -982,52 +1082,51 @@ async function runDriveSync(data, mapIn) {
     map.backupMoved = true;
   }
 
-  const backupContent = JSON.stringify(data);
-  if (map.backupFileId && (await driveItemExists(map.backupFileId))) {
-    await driveUpdateFile(map.backupFileId, backupContent);
-  } else {
-    const file = await driveCreateFile(backupContent, map.rootFolderId);
-    map.backupFileId = file.id;
-    map.backupMoved = true;
+  try {
+    const backupContent = JSON.stringify(data);
+    if (map.backupFileId && (await driveItemExists(map.backupFileId))) {
+      await driveUpdateFile(map.backupFileId, backupContent);
+    } else {
+      const file = await driveCreateFile(backupContent, map.rootFolderId);
+      map.backupFileId = file.id;
+      map.backupMoved = true;
+    }
+  } catch (e) {
+    hadError = true;
   }
 
   for (const course of data.courses) {
     const existing = map.courses[course.id] || { folderId: null, weeks: {} };
-    const folderId = await ensureFolder(existing.folderId, course.name, map.rootFolderId);
+    let folderId;
     try {
-      await window.gapi.client.drive.files.update({
-        fileId: folderId,
-        resource: { name: course.name },
-        fields: "id",
-      });
-    } catch (e) {}
+      folderId = await ensureFolder(existing.folderId, course.name, map.rootFolderId);
+    } catch (e) {
+      hadError = true;
+      map.courses[course.id] = existing;
+      continue;
+    }
     const weeks = { ...existing.weeks };
 
     for (const week of course.weeks) {
-      const ids = weekDriveIds(weeks[week.weekNum]);
-      const label = weekLabel(week);
-      const nextIds = { ...ids };
-
-      if (week.readingNotes.some(noteHasContent)) {
-        const readingName = `${course.name} - ${label} - Reading Notes`;
-        const html = blocksToHtmlDocument(readingName, readingNotesToBlocks(week));
-        nextIds.reading = await upsertDriveDoc(ids.reading || ids.combined, readingName, folderId, html);
-        if (ids.combined && nextIds.reading === ids.combined) nextIds.combined = null;
+      if (!weekHasContent(week)) continue;
+      try {
+        const docName = weekLabel(week);
+        const html = buildSimpleHtmlDoc(`${course.name} — ${docName}`, blocksToHtml(weekToBlocks(week)));
+        const cachedDocId = weeks[week.weekNum];
+        if (cachedDocId && (await driveItemExists(cachedDocId))) {
+          await driveUpdateDoc(cachedDocId, html);
+        } else {
+          weeks[week.weekNum] = await driveCreateDoc(docName, folderId, html);
+        }
+      } catch (e) {
+        hadError = true;
       }
-
-      if (lectureHasContent(week)) {
-        const lectureName = `${course.name} - ${label} - Lecture Notes`;
-        const html = blocksToHtmlDocument(lectureName, lectureToBlocks(week));
-        nextIds.lecture = await upsertDriveDoc(ids.lecture, lectureName, folderId, html);
-      }
-
-      weeks[week.weekNum] = nextIds;
     }
 
     map.courses[course.id] = { folderId, weeks };
   }
 
-  return map;
+  return { map, hadError };
 }
 
 let jsPDFPromise = null;
@@ -1088,15 +1187,14 @@ async function blocksToPdfAndSave(blocks, filename) {
     }
     doc.setFont("times", fontStyle);
     doc.setFontSize(fontSize);
-    const raw = b.type === "rich" ? htmlToPlain(b.html) : b.text || "";
-    const cleanText = (prefix + raw).replace(/\*\*/g, "").replace(/`/g, "");
+    const cleanText = (prefix + (b.text || "")).replace(/\*\*/g, "").replace(/`/g, "");
     const lines = doc.splitTextToSize(cleanText, maxWidth - indent);
     lines.forEach((line) => {
       ensureSpace(lineGap);
       doc.text(line, marginX + indent, y);
       y += lineGap;
     });
-    if (b.type && String(b.type).startsWith("h")) y += 4;
+    if (b.type.startsWith("h")) y += 4;
   });
 
   doc.save(filename);
@@ -1109,20 +1207,12 @@ function sanitizeFilename(name) {
 async function exportDoc({ blocks, baseName, format, showToast }) {
   const filenameBase = sanitizeFilename(baseName);
   if (format === "word") {
+    if (showToast) showToast("Preparing Word document…");
     try {
-      if (showToast) showToast("Preparing Word document…");
-      const blob = await blocksToDocxBlob(blocks);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${filenameBase}.docx`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      await blocksToDocxAndSave(blocks, baseName, `${filenameBase}.docx`);
       if (showToast) showToast("Word document downloaded");
     } catch (e) {
-      if (showToast) showToast("Couldn't build the Word file — try PDF instead");
+      if (showToast) showToast("Couldn't build the Word document — try PDF instead");
     }
   } else {
     if (showToast) showToast("Preparing PDF…");
@@ -1185,15 +1275,119 @@ function Field({ label, children }) {
   );
 }
 
-function TextArea({ value, onChange, placeholder, rows = 3, className = "" }) {
+function TextArea(props) {
+  return <textarea className="btc-textarea" spellCheck="false" {...props} />;
+}
+
+const RTE_FONT_SIZES = [
+  { value: "2", label: "Small" },
+  { value: "3", label: "Normal" },
+  { value: "5", label: "Large" },
+  { value: "7", label: "X-Large" },
+];
+
+function RichTextField({ value, onChange, placeholder, minHeight = 90 }) {
+  const ref = useRef(null);
+  const isFocusedRef = useRef(false);
+
+  useEffect(() => {
+    if (ref.current && !isFocusedRef.current && ref.current.innerHTML !== (value || "")) {
+      ref.current.innerHTML = value || "";
+    }
+  }, [value]);
+
+  const emitChange = () => {
+    if (ref.current) onChange(ref.current.innerHTML);
+  };
+
+  const exec = (cmd, arg) => {
+    if (ref.current) ref.current.focus();
+    document.execCommand(cmd, false, arg);
+    emitChange();
+  };
+
   return (
-    <RichTextField
-      value={value}
-      onChange={(html) => onChange && onChange({ target: { value: html } })}
-      placeholder={placeholder}
-      minHeight={Math.max(64, Number(rows || 3) * 24)}
-      className={className}
-    />
+    <div className="btc-rte">
+      <div className="btc-rte-toolbar">
+        <button type="button" className="btc-rte-btn" title="Bold" onMouseDown={(e) => e.preventDefault()} onClick={() => exec("bold")}>
+          <Bold size={13} />
+        </button>
+        <button type="button" className="btc-rte-btn" title="Italic" onMouseDown={(e) => e.preventDefault()} onClick={() => exec("italic")}>
+          <Italic size={13} />
+        </button>
+        <button
+          type="button"
+          className="btc-rte-btn"
+          title="Underline"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => exec("underline")}
+        >
+          <Underline size={13} />
+        </button>
+        <span className="btc-rte-sep" />
+        <button
+          type="button"
+          className="btc-rte-btn"
+          title="Bulleted list"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => exec("insertUnorderedList")}
+        >
+          <List size={13} />
+        </button>
+        <button
+          type="button"
+          className="btc-rte-btn"
+          title="Numbered list"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => exec("insertOrderedList")}
+        >
+          <ListOrdered size={13} />
+        </button>
+        <span className="btc-rte-sep" />
+        <select
+          className="btc-rte-select"
+          defaultValue=""
+          title="Font size"
+          onMouseDown={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            if (e.target.value) exec("fontSize", e.target.value);
+            e.target.value = "";
+          }}
+        >
+          <option value="" disabled>
+            Size
+          </option>
+          {RTE_FONT_SIZES.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+        <label className="btc-rte-color" title="Text colour">
+          <Palette size={13} />
+          <input type="color" onMouseDown={(e) => e.stopPropagation()} onChange={(e) => exec("foreColor", e.target.value)} />
+        </label>
+        <label className="btc-rte-color" title="Highlight colour">
+          <Highlighter size={13} />
+          <input type="color" onMouseDown={(e) => e.stopPropagation()} onChange={(e) => exec("hiliteColor", e.target.value)} />
+        </label>
+      </div>
+      <div
+        ref={ref}
+        className="btc-rte-content"
+        style={{ minHeight }}
+        contentEditable
+        suppressContentEditableWarning
+        data-placeholder={placeholder}
+        onFocus={() => {
+          isFocusedRef.current = true;
+        }}
+        onBlur={() => {
+          isFocusedRef.current = false;
+        }}
+        onInput={emitChange}
+      />
+    </div>
   );
 }
 
@@ -1246,75 +1440,75 @@ function CaseBriefCard({ index, data, onChange, onDelete, onOutline, onPrewrite,
 
       <div className="btc-case-body">
         <Field label="Facts">
-          <TextArea
-            rows={3}
+          <RichTextField
+            minHeight={64}
             placeholder="Who did what to whom, and what happened..."
             value={data.facts}
-            onChange={(e) => onChange({ ...data, facts: e.target.value })}
+            onChange={(html) => onChange({ ...data, facts: html })}
           />
         </Field>
         <Field label="Procedural history">
-          <TextArea
-            rows={2}
+          <RichTextField
+            minHeight={48}
             placeholder="Trial court, appeal, prior rulings..."
             value={data.procHistory}
-            onChange={(e) => onChange({ ...data, procHistory: e.target.value })}
+            onChange={(html) => onChange({ ...data, procHistory: html })}
           />
         </Field>
         <Field label="Issue">
-          <TextArea
-            rows={2}
+          <RichTextField
+            minHeight={48}
             placeholder="The precise legal question presented..."
             value={data.issue}
-            onChange={(e) => onChange({ ...data, issue: e.target.value })}
+            onChange={(html) => onChange({ ...data, issue: html })}
           />
         </Field>
         <Field label="Holding">
-          <TextArea
-            rows={2}
+          <RichTextField
+            minHeight={48}
             placeholder="The court's answer to the issue..."
             value={data.holding}
-            onChange={(e) => onChange({ ...data, holding: e.target.value })}
+            onChange={(html) => onChange({ ...data, holding: html })}
           />
         </Field>
         <Field label="Reasoning">
-          <TextArea
-            rows={4}
+          <RichTextField
+            minHeight={90}
             placeholder="Why the court held as it did — the doctrine to extract..."
             value={data.reasoning}
-            onChange={(e) => onChange({ ...data, reasoning: e.target.value })}
+            onChange={(html) => onChange({ ...data, reasoning: html })}
           />
         </Field>
-        <div className="btc-dissent-wrap">
-          <label className="btc-dissent-toggle">
-            <input
-              type="checkbox"
-              checked={Boolean(data.includeDissent)}
-              onChange={(e) => onChange({ ...data, includeDissent: e.target.checked })}
-            />
-            Include dissenting opinion
-          </label>
-          {data.includeDissent && (
-            <div className="btc-dissent-fields">
-              <Field label="Dissenting opinion summary">
-                <TextArea
-                  rows={3}
-                  placeholder="The dissent's core argument..."
-                  value={data.dissentSummary || ""}
-                  onChange={(e) => onChange({ ...data, dissentSummary: e.target.value })}
-                />
-              </Field>
-              <Field label="Significance of dissent">
-                <TextArea
-                  rows={3}
-                  placeholder="Why this dissent matters for exams or how the doctrine later evolved..."
-                  value={data.dissentSignificance || ""}
-                  onChange={(e) => onChange({ ...data, dissentSignificance: e.target.value })}
-                />
-              </Field>
-            </div>
-          )}
-        </div>
+
+        <label className="btc-dissent-toggle">
+          <input
+            type="checkbox"
+            checked={!!data.includeDissent}
+            onChange={(e) => onChange({ ...data, includeDissent: e.target.checked })}
+          />
+          Include dissenting opinion
+        </label>
+
+        {data.includeDissent && (
+          <div className="btc-dissent-section">
+            <Field label="Dissenting opinion summary">
+              <RichTextField
+                minHeight={64}
+                placeholder="The dissent's core argument..."
+                value={data.dissentSummary}
+                onChange={(html) => onChange({ ...data, dissentSummary: html })}
+              />
+            </Field>
+            <Field label="Significance of dissent">
+              <RichTextField
+                minHeight={64}
+                placeholder="Why this dissent matters for exams, or how the doctrine might evolve..."
+                value={data.dissentSignificance}
+                onChange={(html) => onChange({ ...data, dissentSignificance: html })}
+              />
+            </Field>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1345,11 +1539,11 @@ function ConceptNoteCard({ index, data, onChange, onDelete, onOutline, onPrewrit
 
       <div className="btc-case-body">
         <Field label="Synthesis">
-          <TextArea
-            rows={4}
+          <RichTextField
+            minHeight={90}
             placeholder="What is this doctrine, and how do the pieces fit together..."
             value={data.summary}
-            onChange={(e) => onChange({ ...data, summary: e.target.value })}
+            onChange={(html) => onChange({ ...data, summary: html })}
           />
         </Field>
         <div className="btc-linked-cases">
@@ -1425,11 +1619,11 @@ function EvolutionNoteCard({ index, data, onChange, onDelete, onOutline, onPrewr
       <div className="btc-case-body">
         <div className="btc-current-rule-box">
           <div className="btc-field-label">Current governing rule</div>
-          <TextArea
-            rows={3}
+          <RichTextField
+            minHeight={64}
             placeholder="The rule as it stands today..."
             value={data.currentRule}
-            onChange={(e) => onChange({ ...data, currentRule: e.target.value })}
+            onChange={(html) => onChange({ ...data, currentRule: html })}
           />
         </div>
         <div className="btc-linked-cases">
@@ -1576,6 +1770,50 @@ function AddNoteMenu({ onAdd }) {
 /*  Week view (Reading Notes / Lecture Notes)                           */
 /* ------------------------------------------------------------------ */
 
+function EditableWeekTitle({ week, onRename }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(week.title || "");
+
+  useEffect(() => {
+    setValue(week.title || "");
+    setEditing(false);
+  }, [week.weekNum]);
+
+  const commit = () => {
+    setEditing(false);
+    onRename(value.trim());
+  };
+
+  if (editing) {
+    return (
+      <input
+        className="btc-week-title-input"
+        autoFocus
+        value={value}
+        placeholder="Add a topic, e.g. Intro to Negligence"
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") {
+            setValue(week.title || "");
+            setEditing(false);
+          }
+        }}
+      />
+    );
+  }
+
+  return (
+    <div className="btc-week-title-row">
+      <h1 className="btc-h1">{weekLabel(week)}</h1>
+      <button className="btc-icon-btn" title="Rename this week" onClick={() => setEditing(true)}>
+        <Pencil size={14} />
+      </button>
+    </div>
+  );
+}
+
 function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCourse, showToast, flashId }) {
   const week = course.weeks[weekNum - 1];
 
@@ -1609,15 +1847,16 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
       showToast("Add some content before sending this to the outline");
       return;
     }
+    const html = renderMdLite(content);
     const existing = course.outline.find((s) => s.noteTag === note.id);
     let nextOutline;
     if (existing) {
-      const merged = { ...existing, content: `${existing.content}\n\n${content}`.trim() };
+      const merged = { ...existing, content: `${existing.content}${html}` };
       nextOutline = course.outline.map((s) => (s.id === existing.id ? merged : s));
     } else {
       const title =
         note.type === "brief" ? note.caseName || "Untitled case" : note.title || "Untitled";
-      nextOutline = [...course.outline, makeOutlineSection({ title, content, noteTag: note.id })];
+      nextOutline = [...course.outline, makeOutlineSection({ title, content: html, noteTag: note.id })];
     }
     updateCourse({ ...course, outline: nextOutline });
     showToast("Added to course outline");
@@ -1633,26 +1872,37 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
     showToast("Sent to exam prewrites");
   };
 
+  const renameWeek = (title) => {
+    updateWeek(weekNum, { ...week, title });
+  };
+
   return (
     <div className="btc-week-view">
       <div className="btc-week-heading btc-heading-row">
         <div>
           <span className="btc-week-eyebrow">{course.name}</span>
-          <input
-            className="btc-h1 btc-week-title-input"
-            value={week.title || `Week ${weekNum}`}
-            onChange={(e) => updateWeek(weekNum, { ...week, title: e.target.value })}
-            aria-label="Week name"
+          <EditableWeekTitle week={week} onRename={renameWeek} />
+        </div>
+        <div className="btc-week-download-group">
+          <DownloadMenu
+            label="Reading notes"
+            baseName={`${course.name} - ${weekLabel(week)} - Reading Notes`}
+            buildBlocks={() => weekReadingBlocks(course, week)}
+            showToast={showToast}
+          />
+          <DownloadMenu
+            label="Lecture notes"
+            baseName={`${course.name} - ${weekLabel(week)} - Lecture Notes`}
+            buildBlocks={() => weekLectureBlocks(course, week)}
+            showToast={showToast}
+          />
+          <DownloadMenu
+            label="Full week"
+            baseName={`${course.name} - ${weekLabel(week)}`}
+            buildBlocks={() => weekToBlocks(week)}
+            showToast={showToast}
           />
         </div>
-        <DownloadMenu
-          label="Download week"
-          baseName={`${course.name} - ${weekLabel(week)} - ${
-            weekTab === "lecture" ? "Lecture Notes" : "Reading Notes"
-          }`}
-          buildBlocks={() => (weekTab === "lecture" ? lectureToBlocks(week) : readingNotesToBlocks(week))}
-          showToast={showToast}
-        />
       </div>
 
       <div className="btc-tabs">
@@ -1702,27 +1952,27 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
         <div className="btc-tab-panel" id={`lecture-${course.id}-${weekNum}`}>
           <div className={`btc-lecture-block${flashId === `lecture-${weekNum}` ? " btc-flash" : ""}`}>
             <Field label="Class discussion">
-              <TextArea
-                rows={6}
+              <RichTextField
+                minHeight={120}
                 placeholder="What came up in class — hypotheticals, cold calls, points raised..."
                 value={week.lecture.discussion}
-                onChange={(e) => updateLecture("discussion", e.target.value)}
+                onChange={(html) => updateLecture("discussion", html)}
               />
             </Field>
             <Field label="Professor's emphasis">
-              <TextArea
-                rows={5}
+              <RichTextField
+                minHeight={100}
                 placeholder="What the professor flagged as important or exam-relevant..."
                 value={week.lecture.emphasis}
-                onChange={(e) => updateLecture("emphasis", e.target.value)}
+                onChange={(html) => updateLecture("emphasis", html)}
               />
             </Field>
             <Field label="Key rules clarified">
-              <TextArea
-                rows={5}
+              <RichTextField
+                minHeight={100}
                 placeholder="Rules the professor restated, narrowed, or corrected..."
                 value={week.lecture.keyRules}
-                onChange={(e) => updateLecture("keyRules", e.target.value)}
+                onChange={(html) => updateLecture("keyRules", html)}
               />
             </Field>
           </div>
@@ -1737,7 +1987,6 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
 /* ------------------------------------------------------------------ */
 
 function OutlineSectionCard({ section, onChange, onDelete, flashId }) {
-  const [mode, setMode] = useState("edit");
   const isFlash = flashId === section.id;
   return (
     <div
@@ -1752,32 +2001,17 @@ function OutlineSectionCard({ section, onChange, onDelete, flashId }) {
           onChange={(e) => onChange({ ...section, title: e.target.value })}
         />
         <div className="btc-outline-section-actions">
-          <button
-            className="btc-icon-btn"
-            title={mode === "edit" ? "Preview" : "Edit"}
-            onClick={() => setMode(mode === "edit" ? "preview" : "edit")}
-          >
-            {mode === "edit" ? <Eye size={15} /> : <FileEdit size={15} />}
-          </button>
           <button className="btc-icon-btn" title="Delete section" onClick={onDelete}>
             <Trash2 size={15} />
           </button>
         </div>
       </div>
-      {mode === "edit" ? (
-        <TextArea
-          rows={8}
-          className="btc-textarea btc-outline-textarea"
-          placeholder="Synthesize the rule, its elements, exceptions, and the cases that shape it..."
-          value={section.content}
-          onChange={(e) => onChange({ ...section, content: e.target.value })}
-        />
-      ) : (
-        <div
-          className="btc-md-preview"
-          dangerouslySetInnerHTML={{ __html: renderMdLite(section.content) }}
-        />
-      )}
+      <RichTextField
+        minHeight={140}
+        placeholder="Synthesize the rule, its elements, exceptions, and the cases that shape it..."
+        value={section.content}
+        onChange={(html) => onChange({ ...section, content: html })}
+      />
     </div>
   );
 }
@@ -1796,16 +2030,17 @@ function OutlineView({ course, updateCourse, flashId, setFlashId, showToast }) {
   const buildFromWeek = (weekNum) => {
     const week = course.weeks[weekNum - 1];
     const compiled = compileWeekContent(week);
+    const html = renderMdLite(compiled);
     const existing = outline.find((s) => s.weekTag === weekNum);
     if (existing) {
-      const merged = { ...existing, content: `${existing.content}\n\n${compiled}`.trim() };
+      const merged = { ...existing, content: `${existing.content}${html}` };
       setOutline(outline.map((s) => (s.id === existing.id ? merged : s)));
       setFlashId(existing.id);
       setTimeout(() => scrollToOutline(existing.id), 50);
     } else {
       const sec = makeOutlineSection({
-        title: `Week ${weekNum}`,
-        content: compiled,
+        title: weekLabel(week),
+        content: html,
         weekTag: weekNum,
       });
       setOutline([...outline, sec]);
@@ -1903,7 +2138,6 @@ function OutlineView({ course, updateCourse, flashId, setFlashId, showToast }) {
 /* ------------------------------------------------------------------ */
 
 function PrewriteCard({ item, onChange, onDelete, flashId }) {
-  const [mode, setMode] = useState("edit");
   const isFlash = flashId === item.id;
   return (
     <div
@@ -1924,38 +2158,23 @@ function PrewriteCard({ item, onChange, onDelete, flashId }) {
             onClick={() =>
               onChange({
                 ...item,
-                content: `${item.content}${item.content.trim() ? "\n\n" : ""}${iracTemplate()}`,
+                content: `${item.content || ""}${renderMdLite(iracTemplate())}`,
               })
             }
           >
             <FileEdit size={15} />
-          </button>
-          <button
-            className="btc-icon-btn"
-            title={mode === "edit" ? "Preview" : "Edit"}
-            onClick={() => setMode(mode === "edit" ? "preview" : "edit")}
-          >
-            {mode === "edit" ? <Eye size={15} /> : <Pencil size={15} />}
           </button>
           <button className="btc-icon-btn" title="Delete" onClick={onDelete}>
             <Trash2 size={15} />
           </button>
         </div>
       </div>
-      {mode === "edit" ? (
-        <TextArea
-          rows={10}
-          className="btc-textarea btc-outline-textarea"
-          placeholder="Build a modular IRAC/CRAC block. Use the skeleton button for bracketed fact-pattern placeholders."
-          value={item.content}
-          onChange={(e) => onChange({ ...item, content: e.target.value })}
-        />
-      ) : (
-        <div
-          className="btc-md-preview"
-          dangerouslySetInnerHTML={{ __html: renderMdLite(item.content) }}
-        />
-      )}
+      <RichTextField
+        minHeight={180}
+        placeholder="Build a modular IRAC/CRAC block. Use the skeleton button for bracketed fact-pattern placeholders."
+        value={item.content}
+        onChange={(html) => onChange({ ...item, content: html })}
+      />
     </div>
   );
 }
@@ -1970,7 +2189,7 @@ function PrewritesView({ course, updateCourse, flashId, setFlashId, showToast })
   };
 
   const addFromTemplate = () => {
-    const p = makePrewrite({ title: "Untitled attack outline", content: iracTemplate() });
+    const p = makePrewrite({ title: "Untitled attack outline", content: renderMdLite(iracTemplate()) });
     setPrewrites([...prewrites, p]);
   };
 
@@ -2042,26 +2261,43 @@ function buildSearchIndex(courses) {
         let text = "";
         if (note.type === "concept") {
           typeLabel = "Concept note";
+          const summaryText = stripHtml(note.summary);
           const casesText = (note.cases || [])
             .map((c) => `${c.caseName} ${c.citation} ${c.note}`)
             .join(" ");
-          text = [note.title, note.summary, casesText].filter(Boolean).join(" ");
+          text = [note.title, summaryText, casesText].filter(Boolean).join(" ");
           title = note.title || "Untitled concept";
-          snippet = note.summary || "";
+          snippet = summaryText;
         } else if (note.type === "evolution") {
           typeLabel = "Evolution of law";
+          const ruleText = stripHtml(note.currentRule);
           const tlText = (note.timeline || [])
             .map((t) => `${t.caseName} ${t.citation} ${t.year} ${t.development}`)
             .join(" ");
-          text = [note.title, note.currentRule, tlText].filter(Boolean).join(" ");
+          text = [note.title, ruleText, tlText].filter(Boolean).join(" ");
           title = note.title || "Untitled doctrine";
-          snippet = note.currentRule || "";
+          snippet = ruleText;
         } else {
-          text = [note.caseName, note.citation, note.facts, note.procHistory, note.issue, note.holding, note.reasoning]
+          const factsText = stripHtml(note.facts);
+          const holdingText = stripHtml(note.holding);
+          const issueText = stripHtml(note.issue);
+          const dissentText = note.includeDissent
+            ? `${stripHtml(note.dissentSummary)} ${stripHtml(note.dissentSignificance)}`
+            : "";
+          text = [
+            note.caseName,
+            note.citation,
+            factsText,
+            stripHtml(note.procHistory),
+            issueText,
+            holdingText,
+            stripHtml(note.reasoning),
+            dissentText,
+          ]
             .filter(Boolean)
             .join(" ");
           title = note.caseName || "Untitled case";
-          snippet = note.holding || note.facts || note.issue || "";
+          snippet = holdingText || factsText || issueText;
         }
         if (text.trim()) {
           items.push({
@@ -2078,9 +2314,10 @@ function buildSearchIndex(courses) {
           });
         }
       });
-      const lectureText = [week.lecture.discussion, week.lecture.emphasis, week.lecture.keyRules]
-        .filter(Boolean)
-        .join(" ");
+      const discussionText = stripHtml(week.lecture.discussion);
+      const emphasisText = stripHtml(week.lecture.emphasis);
+      const keyRulesText = stripHtml(week.lecture.keyRules);
+      const lectureText = [discussionText, emphasisText, keyRulesText].filter(Boolean).join(" ");
       if (lectureText.trim()) {
         items.push({
           id: `lecture-${course.id}-${week.weekNum}`,
@@ -2089,15 +2326,16 @@ function buildSearchIndex(courses) {
           courseName: course.name,
           weekNum: week.weekNum,
           weekTab: "lecture",
-          title: `Week ${week.weekNum} lecture`,
-          snippet: week.lecture.keyRules || week.lecture.emphasis || week.lecture.discussion,
+          title: `${weekLabel(week)} lecture`,
+          snippet: keyRulesText || emphasisText || discussionText,
           text: lectureText.toLowerCase(),
           targetId: `lecture-${week.weekNum}`,
         });
       }
     });
     course.outline.forEach((s) => {
-      const text = `${s.title} ${s.content}`;
+      const contentText = stripHtml(s.content);
+      const text = `${s.title} ${contentText}`;
       if (text.trim()) {
         items.push({
           id: `outline-${s.id}`,
@@ -2106,14 +2344,15 @@ function buildSearchIndex(courses) {
           courseName: course.name,
           view: "outline",
           title: s.title || "Untitled section",
-          snippet: s.content,
+          snippet: contentText,
           text: text.toLowerCase(),
           targetId: s.id,
         });
       }
     });
     course.prewrites.forEach((p) => {
-      const text = `${p.title} ${p.content}`;
+      const contentText = stripHtml(p.content);
+      const text = `${p.title} ${contentText}`;
       if (text.trim()) {
         items.push({
           id: `prewrite-${p.id}`,
@@ -2122,7 +2361,7 @@ function buildSearchIndex(courses) {
           courseName: course.name,
           view: "prewrites",
           title: p.title || "Untitled prewrite",
-          snippet: p.content,
+          snippet: contentText,
           text: text.toLowerCase(),
           targetId: p.id,
         });
@@ -2223,16 +2462,33 @@ function GlobalSearch({ courses, onNavigate }) {
 function CourseSwitcher({ courses, currentId, onSelect, onCreate, onRename, onDelete }) {
   const [open, setOpen] = useState(false);
   const [newName, setNewName] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [editValue, setEditValue] = useState("");
   const ref = useRef(null);
   const current = courses.find((c) => c.id === currentId);
 
   useEffect(() => {
     const onClick = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target)) {
+        setOpen(false);
+        setEditingId(null);
+      }
     };
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
+
+  const startEdit = (c) => {
+    setEditingId(c.id);
+    setEditValue(c.name);
+  };
+
+  const commitEdit = () => {
+    if (editingId && editValue.trim()) {
+      onRename(editingId, editValue.trim());
+    }
+    setEditingId(null);
+  };
 
   return (
     <div className="btc-course-switch" ref={ref}>
@@ -2248,14 +2504,35 @@ function CourseSwitcher({ courses, currentId, onSelect, onCreate, onRename, onDe
                 key={c.id}
                 className={`btc-course-popover-item${c.id === currentId ? " active" : ""}`}
               >
+                {editingId === c.id ? (
+                  <input
+                    className="btc-course-rename-input"
+                    autoFocus
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                    onBlur={commitEdit}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitEdit();
+                      if (e.key === "Escape") setEditingId(null);
+                    }}
+                  />
+                ) : (
+                  <button
+                    className="btc-course-popover-name"
+                    onClick={() => {
+                      onSelect(c.id);
+                      setOpen(false);
+                    }}
+                  >
+                    {c.name}
+                  </button>
+                )}
                 <button
-                  className="btc-course-popover-name"
-                  onClick={() => {
-                    onSelect(c.id);
-                    setOpen(false);
-                  }}
+                  className="btc-icon-btn small"
+                  title="Rename course"
+                  onClick={() => startEdit(c)}
                 >
-                  {c.name}
+                  <Pencil size={13} />
                 </button>
                 <button
                   className="btc-icon-btn small"
@@ -2331,7 +2608,7 @@ function Sidebar({ course, nav, setNav, mobileOpen, closeMobile }) {
                 onClick={() => goWeek(w.weekNum)}
               >
                 <span className="btc-week-item-num">{String(w.weekNum).padStart(2, "0")}</span>
-                <span className="btc-week-item-text">Week {w.weekNum}</span>
+                <span className="btc-week-item-text">{w.title && w.title.trim() ? w.title.trim() : `Week ${w.weekNum}`}</span>
                 {has && <span className="btc-week-dot" aria-hidden="true" />}
               </button>
             </li>
@@ -2622,6 +2899,21 @@ export default function BeatTheCurve() {
   const [pendingImport, setPendingImport] = useState(null);
   const fileInputRef = useRef(null);
 
+  // Dark mode is a device display preference, not course content — kept out of
+  // the synced notebook data/schema entirely so it never touches Drive or backups.
+  const [darkMode, setDarkMode] = useState(() => {
+    try {
+      return localStorage.getItem(DARK_MODE_KEY) === "1";
+    } catch (e) {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(DARK_MODE_KEY, darkMode ? "1" : "0");
+    } catch (e) {}
+  }, [darkMode]);
+
   // ---- Google Drive sync state ----
   const [driveStatus, setDriveStatus] = useState("disconnected");
   // disconnected | connecting | connected | syncing | synced | error
@@ -2682,12 +2974,12 @@ export default function BeatTheCurve() {
     if (!["connected", "synced", "syncing", "error"].includes(driveStatusRef.current)) return;
     setDriveStatus("syncing");
     try {
-      const updatedMap = await runDriveSync(data, driveMapRef.current);
+      const { map: updatedMap, hadError } = await runDriveSync(data, driveMapRef.current);
       driveMapRef.current = updatedMap;
       saveDriveMap(updatedMap);
       setDriveFileId(updatedMap.backupFileId || null);
       setDriveRootFolderId(updatedMap.rootFolderId || null);
-      setDriveStatus("synced");
+      setDriveStatus(hadError ? "error" : "synced");
     } catch (e) {
       setDriveStatus("error");
     }
@@ -2924,6 +3216,14 @@ export default function BeatTheCurve() {
     setNav((n) => ({ ...n, courseId: id }));
   };
 
+  const renameCourse = (id, name) => {
+    setData((d) => ({
+      ...d,
+      courses: d.courses.map((c) => (c.id === id ? { ...c, name } : c)),
+    }));
+    showToast("Course renamed");
+  };
+
   const handleSearchNavigate = (result) => {
     setNav((n) => ({
       ...n,
@@ -2946,7 +3246,7 @@ export default function BeatTheCurve() {
 
   if (!loaded) {
     return (
-      <div className="btc-root btc-loading-root">
+      <div className={`btc-root btc-loading-root${darkMode ? " btc-dark" : ""}`}>
         <BaseStyles />
         <Loader2 className="btc-spin" size={22} />
       </div>
@@ -2954,7 +3254,7 @@ export default function BeatTheCurve() {
   }
 
   return (
-    <div className="btc-root">
+    <div className={`btc-root${darkMode ? " btc-dark" : ""}`}>
       <BaseStyles />
 
       <header className="btc-header">
@@ -2975,6 +3275,13 @@ export default function BeatTheCurve() {
         <GlobalSearch courses={data.courses} onNavigate={handleSearchNavigate} />
 
         <div className="btc-header-right">
+          <button
+            className="btc-btn btc-btn-outline small"
+            onClick={() => setDarkMode((v) => !v)}
+            title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
+          >
+            {darkMode ? <Sun size={14} /> : <Moon size={14} />}
+          </button>
           <BackupMenu
             onExport={handleExportBackup}
             onImportClick={triggerImportPicker}
@@ -3124,6 +3431,20 @@ function BaseStyles() {
         display: flex;
         flex-direction: column;
         position: relative;
+        transition: background 0.2s ease, color 0.2s ease;
+      }
+      .btc-root.btc-dark {
+        --paper: #1C1D1F;
+        --paper-raised: #24262A;
+        --ink: #EDE7D9;
+        --ink-soft: #C7BFA9;
+        --muted: #8B8676;
+        --rule: #37393D;
+        --rule-strong: #46484D;
+        --accent: #D98C74;
+        --accent-soft: #3A2B24;
+        --spine: #C9A96A;
+        --spine-soft: #2C2A20;
       }
       .btc-root * { box-sizing: border-box; }
       .btc-root ::selection { background: var(--accent-soft); }
@@ -3620,7 +3941,79 @@ function BaseStyles() {
         text-underline-offset: 3px;
       }
 
-      /* ---------- Mobile ---------- */
+      /* ---------- Rich text editor ---------- */
+      .btc-rte {
+        border: 1px solid var(--rule-strong); border-radius: 2px;
+        background: var(--paper-raised); overflow: hidden;
+      }
+      .btc-rte-toolbar {
+        display: flex; flex-wrap: nowrap; align-items: center; gap: 2px;
+        padding: 5px 6px; border-bottom: 1px solid var(--rule);
+        background: var(--rule); overflow-x: auto;
+      }
+      .btc-rte-btn {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 26px; height: 24px; flex-shrink: 0;
+        background: none; border: 1px solid transparent; border-radius: 2px;
+        color: var(--ink-soft);
+      }
+      .btc-rte-btn:hover { background: var(--paper-raised); border-color: var(--rule-strong); }
+      .btc-rte-sep {
+        width: 1px; height: 18px; background: var(--rule-strong); margin: 0 3px; flex-shrink: 0;
+      }
+      .btc-rte-select {
+        height: 24px; flex-shrink: 0; border: 1px solid var(--rule-strong); border-radius: 2px;
+        background: var(--paper-raised); color: var(--ink-soft); font-family: 'Inter', sans-serif;
+        font-size: 0.72rem; padding: 0 4px; max-width: 72px;
+      }
+      .btc-rte-color {
+        display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0;
+        height: 24px; padding: 0 4px; border: 1px solid transparent; border-radius: 2px;
+        color: var(--ink-soft); cursor: pointer;
+      }
+      .btc-rte-color:hover { background: var(--paper-raised); border-color: var(--rule-strong); }
+      .btc-rte-color input[type="color"] {
+        -webkit-appearance: none; appearance: none;
+        width: 14px; height: 14px; border: 1px solid var(--rule-strong); border-radius: 50%;
+        padding: 0; background: none; cursor: pointer; flex-shrink: 0;
+      }
+      .btc-rte-color input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+      .btc-rte-color input[type="color"]::-webkit-color-swatch { border: none; border-radius: 50%; }
+      .btc-rte-content {
+        padding: 9px 11px; font-size: 0.96rem; line-height: 1.55; outline: none;
+        overflow-y: auto;
+      }
+      .btc-rte-content:empty:before {
+        content: attr(data-placeholder); color: var(--muted);
+      }
+      .btc-rte-content ul, .btc-rte-content ol { margin: 0 0 6px 20px; padding: 0; }
+      .btc-rte-content p, .btc-rte-content div { margin: 0 0 4px; }
+
+      /* ---------- Dissenting opinion ---------- */
+      .btc-dissent-toggle {
+        display: flex; align-items: center; gap: 7px; margin-top: 6px;
+        font-family: 'Inter', sans-serif; font-size: 0.82rem; color: var(--ink-soft);
+        cursor: pointer; width: fit-content;
+      }
+      .btc-dissent-section {
+        margin-top: 10px; padding: 12px 14px;
+        border-left: 2px solid var(--rule-strong); background: var(--rule);
+        border-radius: 0 3px 3px 0;
+      }
+
+      /* ---------- Editable titles ---------- */
+      .btc-week-title-row { display: flex; align-items: center; gap: 8px; }
+      .btc-week-title-input {
+        font-family: 'Newsreader', Georgia, serif; font-size: 2rem; font-weight: 600;
+        letter-spacing: -0.015em; border: none; border-bottom: 1px solid var(--rule-strong);
+        background: none; color: var(--ink); padding: 2px 0; min-width: 240px;
+      }
+      .btc-week-download-group { display: flex; flex-wrap: wrap; gap: 6px; }
+      .btc-course-rename-input {
+        flex: 1; border: none; border-bottom: 1px solid var(--rule-strong);
+        background: none; padding: 9px 12px; font-size: 0.95rem; color: var(--ink);
+      }
+
       .btc-mobile-scrim {
         position: fixed; inset: 0; background: rgba(33,29,23,0.35); z-index: 20;
       }
