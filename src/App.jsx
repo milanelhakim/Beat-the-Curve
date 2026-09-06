@@ -1593,6 +1593,86 @@ function Paintbrush({ size = 14 }) {
   );
 }
 
+function Strikethrough({ size = 14 }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M6 5.5c1-1 2.8-1.5 4.5-1.5 2.5 0 4.5 1 4.5 2.7 0 1-.6 1.8-1.6 2.3" />
+      <path d="M8.5 19.5c1 .8 2.5 1.3 4 1.3 2.5 0 4.7-1.1 4.7-3 0-1.4-1-2.3-2.5-2.8" />
+      <line x1="4" y1="12" x2="20" y2="12" />
+    </svg>
+  );
+}
+
+function AlignLeft({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <line x1="4" y1="6" x2="20" y2="6" />
+      <line x1="4" y1="10" x2="14" y2="10" />
+      <line x1="4" y1="14" x2="20" y2="14" />
+      <line x1="4" y1="18" x2="14" y2="18" />
+    </svg>
+  );
+}
+function AlignCenter({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <line x1="4" y1="6" x2="20" y2="6" />
+      <line x1="7" y1="10" x2="17" y2="10" />
+      <line x1="4" y1="14" x2="20" y2="14" />
+      <line x1="7" y1="18" x2="17" y2="18" />
+    </svg>
+  );
+}
+function AlignRight({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <line x1="4" y1="6" x2="20" y2="6" />
+      <line x1="10" y1="10" x2="20" y2="10" />
+      <line x1="4" y1="14" x2="20" y2="14" />
+      <line x1="10" y1="18" x2="20" y2="18" />
+    </svg>
+  );
+}
+function AlignJustify({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <line x1="4" y1="6" x2="20" y2="6" />
+      <line x1="4" y1="10" x2="20" y2="10" />
+      <line x1="4" y1="14" x2="20" y2="14" />
+      <line x1="4" y1="18" x2="20" y2="18" />
+    </svg>
+  );
+}
+
+function RemoveFormattingIcon({ size = 14 }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M4 7V4h13" />
+      <path d="M7 4 12 20" />
+      <line x1="9" y1="20" x2="15" y2="20" />
+      <line x1="4" y1="4" x2="20" y2="20" />
+    </svg>
+  );
+}
+
 function FullscreenIcon({ active, size = 14 }) {
   return active ? (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1622,6 +1702,19 @@ const RTE_FONT_SIZES = [
   { value: "7", label: "X-Large" },
 ];
 
+const RTE_FONT_FAMILIES = [
+  { value: "", label: "Default" },
+  { value: "'Newsreader', Georgia, serif", label: "Newsreader (serif)" },
+  { value: "'Inter', Arial, sans-serif", label: "Inter (sans-serif)" },
+  { value: "Georgia, serif", label: "Georgia" },
+  { value: "'Times New Roman', Times, serif", label: "Times New Roman" },
+  { value: "Arial, Helvetica, sans-serif", label: "Arial" },
+  { value: "'Courier New', Courier, monospace", label: "Courier New" },
+];
+
+const RTE_TEXT_COLORS = ["#211D17", "#8C3230", "#1F3737", "#8A6A16", "#0B5FFF", "#4A4438"];
+const RTE_HIGHLIGHT_COLORS = ["#F1DDD4", "#E4E9E4", "#FBF0D2", "#D9E8FB", "#EAD9F5", "transparent"];
+
 const RTE_ALLOWED_TAGS = new Set(["A", "B", "STRONG", "I", "EM", "U", "UL", "OL", "LI", "BR", "P", "DIV", "SPAN", "FONT"]);
 const RTE_ALLOWED_STYLE_PROPS = new Set(["color", "background-color", "font-size"]);
 
@@ -1645,9 +1738,11 @@ function sanitizePastedHtml(html) {
         return;
       }
       const isAnchor = child.tagName === "A";
-      const keepStyle = child.tagName === "SPAN" || child.tagName === "FONT";
+      const isFont = child.tagName === "FONT";
+      const keepStyle = child.tagName === "SPAN" || isFont;
       [...child.attributes].forEach((attr) => {
         if (isAnchor && attr.name === "href") return;
+        if (isFont && attr.name === "face") return;
         if (keepStyle && attr.name === "style") {
           const kept = attr.value
             .split(";")
@@ -1986,9 +2081,11 @@ function GlobalFormatToolbar({ open, onClose }) {
         applyBool("bold", "bold", paintFormat.bold);
         applyBool("italic", "italic", paintFormat.italic);
         applyBool("underline", "underline", paintFormat.underline);
+        applyBool("strikeThrough", "strikeThrough", paintFormat.strike);
         if (paintFormat.foreColor) document.execCommand("foreColor", false, paintFormat.foreColor);
         if (paintFormat.hiliteColor) document.execCommand("hiliteColor", false, paintFormat.hiliteColor);
         if (paintFormat.fontSize) document.execCommand("fontSize", false, paintFormat.fontSize);
+        if (paintFormat.fontName) document.execCommand("fontName", false, paintFormat.fontName);
       }
       setPainting(false);
       document.body.classList.remove("btc-painting-cursor");
@@ -2000,7 +2097,6 @@ function GlobalFormatToolbar({ open, onClose }) {
   if (!open) return null;
 
   const exec = (cmd, arg) => document.execCommand(cmd, false, arg);
-  const execIndentGlobal = (direction) => document.execCommand(direction === "in" ? "indent" : "outdent");
 
   const saveSelection = () => {
     const sel = window.getSelection();
@@ -2038,9 +2134,11 @@ function GlobalFormatToolbar({ open, onClose }) {
       bold: document.queryCommandState("bold"),
       italic: document.queryCommandState("italic"),
       underline: document.queryCommandState("underline"),
+      strike: document.queryCommandState("strikeThrough"),
       foreColor: document.queryCommandValue("foreColor"),
       hiliteColor: document.queryCommandValue("hiliteColor") || document.queryCommandValue("backColor"),
       fontSize: document.queryCommandValue("fontSize"),
+      fontName: document.queryCommandValue("fontName"),
     });
     setPainting(true);
     document.body.classList.add("btc-painting-cursor");
@@ -2049,98 +2147,188 @@ function GlobalFormatToolbar({ open, onClose }) {
   const stop = (e) => e.preventDefault();
 
   return (
-    <div className="btc-global-toolbar">
-      <div className="btc-global-toolbar-head">
+    <div className="btc-format-rail">
+      <div className="btc-format-rail-head">
         <span>Formatting</span>
-        <button className="btc-icon-btn small" onClick={onClose} title="Close">
-          <X size={13} />
+        <button className="btc-icon-btn small" onClick={onClose} title="Hide toolbar">
+          <ChevronRight size={15} />
         </button>
       </div>
-      <div className="btc-global-toolbar-grid">
-        <button className="btc-rte-btn" title="Bold (⌘B)" onMouseDown={stop} onClick={() => exec("bold")}>
-          <Bold size={14} />
-        </button>
-        <button className="btc-rte-btn" title="Italic (⌘I)" onMouseDown={stop} onClick={() => exec("italic")}>
-          <Italic size={14} />
-        </button>
-        <button className="btc-rte-btn" title="Underline (⌘U)" onMouseDown={stop} onClick={() => exec("underline")}>
-          <Underline size={14} />
-        </button>
-        <button
-          className={`btc-rte-btn${painting ? " active" : ""}`}
-          title="Format painter — copies the current selection's formatting, then applies it to the next text you select"
-          onMouseDown={stop}
-          onClick={copyFormat}
-        >
-          <Paintbrush size={14} />
-        </button>
-        <button className="btc-rte-btn" title="Bulleted list" onMouseDown={stop} onClick={() => exec("insertUnorderedList")}>
-          <List size={14} />
-        </button>
-        <button className="btc-rte-btn" title="Numbered list" onMouseDown={stop} onClick={() => exec("insertOrderedList")}>
-          <ListOrdered size={14} />
-        </button>
-        <button className="btc-rte-btn" title="Decrease indent (⌘[)" onMouseDown={stop} onClick={() => execIndentGlobal("out")}>
-          <IndentIcon size={14} dir="out" />
-        </button>
-        <button className="btc-rte-btn" title="Increase indent (⌘])" onMouseDown={stop} onClick={() => execIndentGlobal("in")}>
-          <IndentIcon size={14} dir="in" />
-        </button>
-        <button
-          className="btc-rte-btn"
-          title="Add link (select text first, or ⌘K)"
-          onMouseDown={stop}
-          onClick={openLink}
-        >
-          <Link size={14} />
-        </button>
-        <label className="btc-rte-color" title="Text colour" onMouseDown={stop}>
-          <Palette size={14} />
-          <input type="color" onChange={(e) => exec("foreColor", e.target.value)} />
-        </label>
-        <label className="btc-rte-color" title="Highlight colour" onMouseDown={stop}>
-          <Highlighter size={14} />
-          <input type="color" onChange={(e) => exec("hiliteColor", e.target.value)} />
-        </label>
-        <select
-          className="btc-rte-select"
-          defaultValue=""
-          title="Font size"
-          onMouseDown={stop}
-          onChange={(e) => {
-            if (e.target.value) exec("fontSize", e.target.value);
-            e.target.value = "";
-          }}
-        >
-          <option value="" disabled>
-            Size
-          </option>
-          {RTE_FONT_SIZES.map((s) => (
-            <option key={s.value} value={s.value}>
-              {s.label}
-            </option>
-          ))}
-        </select>
-      </div>
-      {linkOpen && (
-        <div className="btc-global-toolbar-link">
-          <input
-            className="btc-rte-link-input"
-            autoFocus
-            placeholder="https://example.com"
-            value={linkInput}
-            onChange={(e) => setLinkInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") applyLink();
-              if (e.key === "Escape") setLinkOpen(false);
-            }}
-          />
-          <button className="btc-btn btc-btn-primary small" onClick={applyLink}>
-            Add
-          </button>
+      <div className="btc-format-rail-body">
+        <div className="btc-format-section">
+          <div className="btc-format-section-label">Text</div>
+          <div className="btc-format-row">
+            <button className="btc-rte-btn" title="Bold (⌘B)" onMouseDown={stop} onClick={() => exec("bold")}>
+              <Bold size={14} />
+            </button>
+            <button className="btc-rte-btn" title="Italic (⌘I)" onMouseDown={stop} onClick={() => exec("italic")}>
+              <Italic size={14} />
+            </button>
+            <button className="btc-rte-btn" title="Underline (⌘U)" onMouseDown={stop} onClick={() => exec("underline")}>
+              <Underline size={14} />
+            </button>
+            <button className="btc-rte-btn" title="Strikethrough" onMouseDown={stop} onClick={() => exec("strikeThrough")}>
+              <Strikethrough size={14} />
+            </button>
+            <button className="btc-rte-btn" title="Superscript" onMouseDown={stop} onClick={() => exec("superscript")}>
+              <span className="btc-supersub">x²</span>
+            </button>
+            <button className="btc-rte-btn" title="Subscript" onMouseDown={stop} onClick={() => exec("subscript")}>
+              <span className="btc-supersub">x₂</span>
+            </button>
+            <button
+              className={`btc-rte-btn${painting ? " active" : ""}`}
+              title="Format painter — copies the current selection's formatting, then applies it to the next text you select"
+              onMouseDown={stop}
+              onClick={copyFormat}
+            >
+              <Paintbrush size={14} />
+            </button>
+            <button className="btc-rte-btn" title="Clear formatting" onMouseDown={stop} onClick={() => exec("removeFormat")}>
+              <RemoveFormattingIcon size={14} />
+            </button>
+          </div>
         </div>
-      )}
-      {painting && <div className="btc-global-toolbar-hint">Now select text anywhere to apply the copied formatting.</div>}
+
+        <div className="btc-format-section">
+          <div className="btc-format-section-label">Font</div>
+          <select
+            className="btc-rte-select btc-format-full-select"
+            defaultValue=""
+            title="Font family"
+            onMouseDown={stop}
+            onChange={(e) => {
+              if (e.target.value) exec("fontName", e.target.value);
+              e.target.value = "";
+            }}
+          >
+            <option value="" disabled>
+              Font family
+            </option>
+            {RTE_FONT_FAMILIES.map((f) => (
+              <option key={f.label} value={f.value}>
+                {f.label}
+              </option>
+            ))}
+          </select>
+          <select
+            className="btc-rte-select btc-format-full-select"
+            defaultValue=""
+            title="Font size"
+            onMouseDown={stop}
+            onChange={(e) => {
+              if (e.target.value) exec("fontSize", e.target.value);
+              e.target.value = "";
+            }}
+          >
+            <option value="" disabled>
+              Size
+            </option>
+            {RTE_FONT_SIZES.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="btc-format-section">
+          <div className="btc-format-section-label">Colour</div>
+          <div className="btc-format-swatch-row">
+            {RTE_TEXT_COLORS.map((c) => (
+              <button
+                key={c}
+                className="btc-format-swatch"
+                style={{ background: c }}
+                title="Text colour"
+                onMouseDown={stop}
+                onClick={() => exec("foreColor", c)}
+              />
+            ))}
+            <label className="btc-format-swatch btc-format-swatch-custom" title="Custom text colour" onMouseDown={stop}>
+              <Palette size={12} />
+              <input type="color" onChange={(e) => exec("foreColor", e.target.value)} />
+            </label>
+          </div>
+          <div className="btc-format-swatch-row">
+            {RTE_HIGHLIGHT_COLORS.map((c) => (
+              <button
+                key={c}
+                className="btc-format-swatch"
+                style={{ background: c === "transparent" ? "var(--paper)" : c }}
+                title={c === "transparent" ? "Remove highlight" : "Highlight colour"}
+                onMouseDown={stop}
+                onClick={() => exec("hiliteColor", c)}
+              />
+            ))}
+            <label className="btc-format-swatch btc-format-swatch-custom" title="Custom highlight colour" onMouseDown={stop}>
+              <Highlighter size={12} />
+              <input type="color" onChange={(e) => exec("hiliteColor", e.target.value)} />
+            </label>
+          </div>
+        </div>
+
+        <div className="btc-format-section">
+          <div className="btc-format-section-label">Paragraph</div>
+          <div className="btc-format-row">
+            <button className="btc-rte-btn" title="Bulleted list" onMouseDown={stop} onClick={() => exec("insertUnorderedList")}>
+              <List size={14} />
+            </button>
+            <button className="btc-rte-btn" title="Numbered list" onMouseDown={stop} onClick={() => exec("insertOrderedList")}>
+              <ListOrdered size={14} />
+            </button>
+            <button className="btc-rte-btn" title="Decrease indent (⌘[)" onMouseDown={stop} onClick={() => exec("outdent")}>
+              <IndentIcon size={14} dir="out" />
+            </button>
+            <button className="btc-rte-btn" title="Increase indent (⌘])" onMouseDown={stop} onClick={() => exec("indent")}>
+              <IndentIcon size={14} dir="in" />
+            </button>
+          </div>
+          <div className="btc-format-row">
+            <button className="btc-rte-btn" title="Align left" onMouseDown={stop} onClick={() => exec("justifyLeft")}>
+              <AlignLeft size={14} />
+            </button>
+            <button className="btc-rte-btn" title="Align centre" onMouseDown={stop} onClick={() => exec("justifyCenter")}>
+              <AlignCenter size={14} />
+            </button>
+            <button className="btc-rte-btn" title="Align right" onMouseDown={stop} onClick={() => exec("justifyRight")}>
+              <AlignRight size={14} />
+            </button>
+            <button className="btc-rte-btn" title="Justify" onMouseDown={stop} onClick={() => exec("justifyFull")}>
+              <AlignJustify size={14} />
+            </button>
+          </div>
+        </div>
+
+        <div className="btc-format-section">
+          <div className="btc-format-section-label">Insert</div>
+          <button className="btc-btn btc-btn-outline small btc-format-full-btn" onMouseDown={stop} onClick={openLink}>
+            <Link size={13} /> Link (⌘K)
+          </button>
+          {linkOpen && (
+            <div className="btc-format-link-box">
+              <input
+                className="btc-rte-link-input"
+                autoFocus
+                placeholder="https://example.com"
+                value={linkInput}
+                onChange={(e) => setLinkInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") applyLink();
+                  if (e.key === "Escape") setLinkOpen(false);
+                }}
+              />
+              <button className="btc-btn btc-btn-primary small" onClick={applyLink}>
+                Add
+              </button>
+            </div>
+          )}
+        </div>
+
+        {painting && (
+          <div className="btc-format-hint">Now select text anywhere in the app to apply the copied formatting.</div>
+        )}
+      </div>
     </div>
   );
 }
@@ -6093,28 +6281,47 @@ function BaseStyles() {
       .btc-rte-btn:hover { background: var(--paper); border-color: var(--rule-strong); }
       .btc-rte-btn.active { background: var(--spine); color: #F5F0E1; border-color: var(--spine); }
 
-      /* ---------- Global formatting toolbar ---------- */
-      .btc-global-toolbar {
-        position: fixed; top: 110px; right: 18px; z-index: 90;
-        background: var(--paper-raised); border: 1px solid var(--rule-strong); border-radius: 6px;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.14); padding: 8px; width: 176px;
+      /* ---------- Global formatting toolbar (right-side rail) ---------- */
+      .btc-format-rail {
+        position: fixed; top: 62px; right: 0; bottom: 0; z-index: 90; width: 240px;
+        background: var(--paper-raised); border-left: 1px solid var(--rule);
+        box-shadow: -6px 0 18px rgba(0,0,0,0.06);
+        display: flex; flex-direction: column;
       }
-      .btc-global-toolbar-head {
+      .btc-format-rail-head {
         display: flex; align-items: center; justify-content: space-between;
         font-family: 'Inter', sans-serif; font-size: 0.72rem; color: var(--muted);
-        text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; padding: 0 2px;
+        text-transform: uppercase; letter-spacing: 0.06em;
+        padding: 14px 14px 10px; border-bottom: 1px solid var(--rule); flex-shrink: 0;
       }
-      .btc-global-toolbar-grid {
-        display: flex; flex-wrap: wrap; gap: 3px;
-      }
-      .btc-global-toolbar-grid .btc-rte-select { max-width: 100%; flex: 1 1 100%; }
-      .btc-global-toolbar-link {
-        display: flex; gap: 4px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--rule);
-      }
-      .btc-global-toolbar-link .btc-rte-link-input { flex: 1; min-width: 0; }
-      .btc-global-toolbar-hint {
+      .btc-format-rail-body { flex: 1; overflow-y: auto; padding: 14px; }
+      .btc-format-section { margin-bottom: 18px; }
+      .btc-format-section-label {
         font-family: 'Inter', sans-serif; font-size: 0.7rem; color: var(--muted);
-        margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--rule); line-height: 1.4;
+        margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.04em;
+      }
+      .btc-format-row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+      .btc-format-full-select { width: 100%; max-width: none; margin-bottom: 6px; }
+      .btc-format-full-btn { width: 100%; justify-content: center; }
+      .btc-supersub { font-family: 'Inter', sans-serif; font-size: 0.72rem; font-weight: 600; }
+      .btc-format-swatch-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+      .btc-format-swatch {
+        width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--rule-strong);
+        padding: 0; cursor: pointer;
+      }
+      .btc-format-swatch:hover { border-color: var(--ink-soft); transform: scale(1.08); }
+      .btc-format-swatch-custom {
+        display: flex; align-items: center; justify-content: center;
+        background: var(--paper) !important; color: var(--muted); position: relative; overflow: hidden;
+      }
+      .btc-format-swatch-custom input[type="color"] {
+        position: absolute; inset: 0; opacity: 0; cursor: pointer; border: none; padding: 0;
+      }
+      .btc-format-link-box { display: flex; gap: 4px; margin-top: 8px; }
+      .btc-format-link-box .btc-rte-link-input { flex: 1; min-width: 0; }
+      .btc-format-hint {
+        font-family: 'Inter', sans-serif; font-size: 0.7rem; color: var(--muted);
+        padding-top: 10px; border-top: 1px solid var(--rule); line-height: 1.4;
       }
       body.btc-painting-cursor, body.btc-painting-cursor * { cursor: copy !important; }
 
