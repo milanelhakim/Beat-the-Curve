@@ -1441,6 +1441,28 @@ function SplitViewIcon({ size = 13 }) {
   );
 }
 
+function FullscreenIcon({ active, size = 14 }) {
+  return active ? (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 9H4V4" />
+      <path d="M4 9l6-6" />
+      <path d="M15 9h5V4" />
+      <path d="M20 9l-6-6" />
+      <path d="M9 15H4v5" />
+      <path d="M4 15l6 6" />
+      <path d="M15 15h5v5" />
+      <path d="M20 15l-6 6" />
+    </svg>
+  ) : (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+      <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+      <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+      <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+    </svg>
+  );
+}
+
 const RTE_FONT_SIZES = [
   { value: "2", label: "Small" },
   { value: "3", label: "Normal" },
@@ -1777,10 +1799,12 @@ function PdfViewer({ blob, fileId, onMissing }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [scale, setScale] = useState(1.15);
   const [status, setStatus] = useState("loading"); // loading | ready | error
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const canvasRef = useRef(null);
   const textLayerRef = useRef(null);
   const thumbRefs = useRef({});
   const renderTaskRef = useRef(null);
+  const mouseDownPosRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -1823,24 +1847,31 @@ function PdfViewer({ blob, fileId, onMissing }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pdfjsLib, blob, fileId]);
 
+  // Renders the page at devicePixelRatio resolution into the canvas's actual
+  // pixel buffer, while keeping its CSS (display) size at the logical scale —
+  // the standard fix for canvases looking soft/pixelated on retina displays.
   useEffect(() => {
     if (!pdfDoc || !canvasRef.current) return;
     let cancelled = false;
     (async () => {
       const page = await pdfDoc.getPage(currentPage);
       if (cancelled) return;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const viewport = page.getViewport({ scale });
+      const renderViewport = page.getViewport({ scale: scale * dpr });
       const canvas = canvasRef.current;
       if (!canvas) return;
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
+      canvas.width = renderViewport.width;
+      canvas.height = renderViewport.height;
+      canvas.style.width = `${viewport.width}px`;
+      canvas.style.height = `${viewport.height}px`;
       const ctx = canvas.getContext("2d");
       if (renderTaskRef.current) {
         try {
           renderTaskRef.current.cancel();
         } catch (e) {}
       }
-      const task = page.render({ canvasContext: ctx, viewport });
+      const task = page.render({ canvasContext: ctx, viewport: renderViewport });
       renderTaskRef.current = task;
       try {
         await task.promise;
@@ -1851,7 +1882,8 @@ function PdfViewer({ blob, fileId, onMissing }) {
 
       // Text layer: invisible, precisely-positioned real text sitting over the
       // canvas so the rendered page can be selected, copied, and highlighted
-      // like normal text, even though the visible glyphs are just pixels.
+      // like normal text. Sized to the logical (non-DPR) viewport, matching
+      // the canvas's CSS display size.
       const textLayerEl = textLayerRef.current;
       if (textLayerEl && pdfjsLib.renderTextLayer) {
         textLayerEl.innerHTML = "";
@@ -1880,6 +1912,7 @@ function PdfViewer({ blob, fileId, onMissing }) {
     if (!pdfDoc) return;
     let cancelled = false;
     (async () => {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
       for (let i = 1; i <= pdfDoc.numPages; i++) {
         if (cancelled) return;
         const canvas = thumbRefs.current[i];
@@ -1888,10 +1921,13 @@ function PdfViewer({ blob, fileId, onMissing }) {
           const page = await pdfDoc.getPage(i);
           if (cancelled) return;
           const viewport = page.getViewport({ scale: 0.16 });
-          canvas.width = viewport.width;
-          canvas.height = viewport.height;
+          const renderViewport = page.getViewport({ scale: 0.16 * dpr });
+          canvas.width = renderViewport.width;
+          canvas.height = renderViewport.height;
+          canvas.style.width = `${viewport.width}px`;
+          canvas.style.height = `${viewport.height}px`;
           const ctx = canvas.getContext("2d");
-          await page.render({ canvasContext: ctx, viewport }).promise;
+          await page.render({ canvasContext: ctx, viewport: renderViewport }).promise;
         } catch (e) {
           // a single failed thumbnail shouldn't block the rest
         }
@@ -1901,6 +1937,41 @@ function PdfViewer({ blob, fileId, onMissing }) {
       cancelled = true;
     };
   }, [pdfDoc]);
+
+  // Fullscreen: Escape to exit, arrow keys to flip pages.
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") setIsFullscreen(false);
+      else if (e.key === "ArrowLeft") setCurrentPage((p) => Math.max(1, p - 1));
+      else if (e.key === "ArrowRight") setCurrentPage((p) => Math.min(numPages, p + 1));
+    };
+    document.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [isFullscreen, numPages]);
+
+  // Click-to-flip: click the left half of the page to go back, right half to
+  // advance — but only for an actual click, not a text-selection drag.
+  const handlePageMouseDown = (e) => {
+    mouseDownPosRef.current = { x: e.clientX, y: e.clientY };
+  };
+  const handlePageMouseUp = (e) => {
+    const start = mouseDownPosRef.current;
+    mouseDownPosRef.current = null;
+    if (!start) return;
+    if (Math.abs(e.clientX - start.x) > 6 || Math.abs(e.clientY - start.y) > 6) return;
+    const sel = window.getSelection();
+    if (sel && sel.toString().trim()) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    if (clickX < rect.width / 2) setCurrentPage((p) => Math.max(1, p - 1));
+    else setCurrentPage((p) => Math.min(numPages, p + 1));
+  };
 
   if (status === "error") {
     return (
@@ -1915,8 +1986,8 @@ function PdfViewer({ blob, fileId, onMissing }) {
     );
   }
 
-  return (
-    <div className="btc-pdf-viewer">
+  const viewerBody = (
+    <div className={`btc-pdf-viewer${isFullscreen ? " btc-pdf-viewer-fullscreen" : ""}`}>
       <div className="btc-pdf-thumbs">
         {status === "loading" && !numPages ? (
           <div className="btc-pdf-thumbs-loading">
@@ -1963,20 +2034,57 @@ function PdfViewer({ blob, fileId, onMissing }) {
           <button className="btc-icon-btn" title="Zoom in" onClick={() => setScale((s) => Math.min(3, s + 0.15))}>
             <ZoomIn size={14} />
           </button>
+          <span className="btc-rte-sep" />
+          <button
+            className="btc-icon-btn"
+            title={isFullscreen ? "Exit full screen" : "Full screen"}
+            onClick={() => setIsFullscreen((v) => !v)}
+          >
+            <FullscreenIcon active={isFullscreen} size={14} />
+          </button>
         </div>
-        <div className="btc-pdf-canvas-wrap">
+        <div
+          className="btc-pdf-canvas-wrap"
+          onMouseDown={handlePageMouseDown}
+          onMouseUp={handlePageMouseUp}
+        >
           {status === "loading" ? (
             <Loader2 size={20} className="btc-spin" />
           ) : (
             <div className="btc-pdf-page-wrap">
               <canvas ref={canvasRef} />
               <div ref={textLayerRef} className="btc-pdf-text-layer" />
+              {isFullscreen && (
+                <>
+                  <button
+                    className="btc-pdf-nav-arrow left"
+                    title="Previous page"
+                    disabled={currentPage <= 1}
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  >
+                    <ChevronLeft size={22} />
+                  </button>
+                  <button
+                    className="btc-pdf-nav-arrow right"
+                    title="Next page"
+                    disabled={currentPage >= numPages}
+                    onClick={() => setCurrentPage((p) => Math.min(numPages, p + 1))}
+                  >
+                    <ChevronRight size={22} />
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
       </div>
     </div>
   );
+
+  if (isFullscreen) {
+    return <div className="btc-pdf-fullscreen-overlay">{viewerBody}</div>;
+  }
+  return viewerBody;
 }
 
 
@@ -4918,6 +5026,27 @@ function BaseStyles() {
         transform-origin: 0% 0%;
       }
       .btc-pdf-text-layer ::selection { background: rgba(31, 55, 55, 0.35); }
+
+      .btc-pdf-fullscreen-overlay {
+        position: fixed; inset: 0; z-index: 200; background: var(--paper);
+        padding: 16px; display: flex;
+      }
+      .btc-pdf-viewer-fullscreen { height: 100%; width: 100%; }
+      .btc-pdf-viewer-fullscreen .btc-pdf-canvas-wrap { background: var(--rule-strong); }
+
+      .btc-pdf-nav-arrow {
+        position: absolute; top: 50%; transform: translateY(-50%);
+        width: 44px; height: 44px; border-radius: 50%; border: none;
+        background: rgba(0,0,0,0.35); color: #fff;
+        display: flex; align-items: center; justify-content: center;
+        opacity: 0; transition: opacity 0.15s;
+      }
+      .btc-pdf-page-wrap:hover .btc-pdf-nav-arrow { opacity: 1; }
+      .btc-pdf-nav-arrow:disabled { opacity: 0 !important; }
+      .btc-pdf-nav-arrow.left { left: -22px; }
+      .btc-pdf-nav-arrow.right { right: -22px; }
+      .btc-pdf-nav-arrow:hover:not(:disabled) { background: rgba(0,0,0,0.55); }
+
       .btc-pdf-error {
         margin: auto; text-align: center; color: var(--ink-soft);
         display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 30px;
