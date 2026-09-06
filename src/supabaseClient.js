@@ -22,21 +22,14 @@ if (!supabaseUrl || !supabaseAnonKey) {
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 /**
- * Assumed `notes` table schema — adjust the column names in App code below
- * if your actual table differs:
+ * Actual `notes` table schema in use (adjust here if it changes again):
  *
- *   create table notes (
- *     user_id uuid references auth.users primary key,
- *     data jsonb not null,
- *     updated_at timestamptz default now()
- *   );
- *   alter table notes enable row level security;
- *   create policy "Users manage their own notes" on notes
- *     for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+ *   id uuid primary key default gen_random_uuid()
+ *   user_id uuid references auth.users   -- needs a UNIQUE constraint for upsert to work
+ *   "NoteBook" jsonb                     -- the entire notebook payload, case-sensitive name
+ *   updated_at timestamptz default now()
  *
- * One row per user; `data` holds the entire notebook payload (same shape
- * produced by hydrateData() in the main app) as a single JSON blob — this
- * mirrors the existing local/Drive JSON-backup model, just synced live.
+ * One row per user; the app's App.jsx reads/writes the "NoteBook" column.
  */
 
 /** Starts the Google OAuth flow via Supabase, requesting Drive file access
