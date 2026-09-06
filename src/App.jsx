@@ -4040,15 +4040,15 @@ export default function BeatTheCurve() {
       try {
         const { data: row, error } = await supabase
           .from("notes")
-          .select("data")
+          .select("NoteBook")
           .eq("user_id", session.user.id)
           .maybeSingle();
         if (cancelled) return;
         if (error) {
           console.error("Supabase fetch error:", error.message);
           showToast("Couldn't load your synced notes — check the console for details");
-        } else if (row?.data) {
-          setData(hydrateData(row.data));
+        } else if (row?.NoteBook) {
+          setData(hydrateData(row.NoteBook));
         }
       } catch (e) {
         console.error("Supabase fetch error:", e);
@@ -4059,7 +4059,7 @@ export default function BeatTheCurve() {
           "postgres_changes",
           { event: "*", schema: "public", table: "notes", filter: `user_id=eq.${session.user.id}` },
           (payload) => {
-            const incoming = payload.new && payload.new.data;
+            const incoming = payload.new && payload.new.NoteBook;
             if (!incoming) return;
             setData((current) => {
               // Skip re-applying the change we just pushed ourselves.
@@ -4085,7 +4085,7 @@ export default function BeatTheCurve() {
       supabase
         .from("notes")
         .upsert(
-          { user_id: session.user.id, data, updated_at: new Date().toISOString() },
+          { user_id: session.user.id, NoteBook: data, updated_at: new Date().toISOString() },
           { onConflict: "user_id" }
         )
         .then(({ error }) => {
