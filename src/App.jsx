@@ -4060,7 +4060,7 @@ export default function BeatTheCurve() {
   const [appZoom, setAppZoom] = useState(() => {
     try {
       const v = parseFloat(localStorage.getItem(APP_ZOOM_KEY));
-      return Number.isFinite(v) ? v : 1;
+      return Number.isFinite(v) ? Math.min(2, Math.max(1, v)) : 1;
     } catch (e) {
       return 1;
     }
@@ -4074,7 +4074,7 @@ export default function BeatTheCurve() {
     const onWheel = (e) => {
       if (!(e.metaKey || e.ctrlKey)) return;
       e.preventDefault();
-      setAppZoom((z) => Math.min(2, Math.max(0.6, z - e.deltaY * 0.0015)));
+      setAppZoom((z) => Math.min(2, Math.max(1, z - e.deltaY * 0.0015)));
     };
     window.addEventListener("wheel", onWheel, { passive: false });
     return () => window.removeEventListener("wheel", onWheel);
@@ -4739,15 +4739,7 @@ export default function BeatTheCurve() {
   }
 
   return (
-    <div
-      className={`btc-root${darkMode ? " btc-dark" : ""}`}
-      style={{
-        transform: `scale(${appZoom})`,
-        transformOrigin: "top left",
-        width: `${100 / appZoom}%`,
-        height: `${100 / appZoom}%`,
-      }}
-    >
+    <div className={`btc-root${darkMode ? " btc-dark" : ""}`}>
       <BaseStyles />
 
       <header className="btc-header">
@@ -4844,9 +4836,12 @@ export default function BeatTheCurve() {
       />
 
       {!currentCourse ? (
-        <Onboarding onCreate={createCourse} onImportClick={triggerImportPicker} />
+        <div className="btc-zoom-wrap" style={{ transform: `scale(${appZoom})`, transformOrigin: "top left" }}>
+          <Onboarding onCreate={createCourse} onImportClick={triggerImportPicker} />
+        </div>
       ) : (
-        <div className="btc-body">
+        <div className="btc-zoom-wrap" style={{ transform: `scale(${appZoom})`, transformOrigin: "top left" }}>
+          <div className="btc-body">
           <div className="btc-course-bar">
             <CourseSwitcher
               courses={data.courses}
@@ -4917,6 +4912,7 @@ export default function BeatTheCurve() {
                 )}
               </ResizablePane>
             </main>
+          </div>
           </div>
         </div>
       )}
@@ -5167,6 +5163,7 @@ function BaseStyles() {
       }
 
       /* ---------- Body / layout ---------- */
+      .btc-zoom-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; }
       .btc-body { flex: 1; display: flex; flex-direction: column; min-height: 0; }
       .btc-layout { flex: 1; display: flex; min-height: 0; }
 
