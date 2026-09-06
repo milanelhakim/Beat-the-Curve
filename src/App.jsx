@@ -41,6 +41,7 @@ import {
   ZoomIn,
   ZoomOut,
   ChevronLeft,
+  Columns2,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
@@ -1757,6 +1758,7 @@ function PdfViewer({ blob, fileId, onMissing }) {
   const [scale, setScale] = useState(1.15);
   const [status, setStatus] = useState("loading"); // loading | ready | error
   const canvasRef = useRef(null);
+  const textLayerRef = useRef(null);
   const thumbRefs = useRef({});
   const renderTaskRef = useRef(null);
 
@@ -1825,11 +1827,34 @@ function PdfViewer({ blob, fileId, onMissing }) {
       } catch (e) {
         // render cancelled by a newer page/zoom change — safe to ignore
       }
+      if (cancelled) return;
+
+      // Text layer: invisible, precisely-positioned real text sitting over the
+      // canvas so the rendered page can be selected, copied, and highlighted
+      // like normal text, even though the visible glyphs are just pixels.
+      const textLayerEl = textLayerRef.current;
+      if (textLayerEl && pdfjsLib.renderTextLayer) {
+        textLayerEl.innerHTML = "";
+        textLayerEl.style.width = `${viewport.width}px`;
+        textLayerEl.style.height = `${viewport.height}px`;
+        try {
+          const textContent = await page.getTextContent();
+          if (cancelled) return;
+          await pdfjsLib.renderTextLayer({
+            textContentSource: textContent,
+            container: textLayerEl,
+            viewport,
+            textDivs: [],
+          }).promise;
+        } catch (e) {
+          // selection layer is a nice-to-have — don't fail the visible render over it
+        }
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [pdfDoc, currentPage, scale]);
+  }, [pdfDoc, currentPage, scale, pdfjsLib]);
 
   useEffect(() => {
     if (!pdfDoc) return;
@@ -1920,7 +1945,14 @@ function PdfViewer({ blob, fileId, onMissing }) {
           </button>
         </div>
         <div className="btc-pdf-canvas-wrap">
-          {status === "loading" ? <Loader2 size={20} className="btc-spin" /> : <canvas ref={canvasRef} />}
+          {status === "loading" ? (
+            <Loader2 size={20} className="btc-spin" />
+          ) : (
+            <div className="btc-pdf-page-wrap">
+              <canvas ref={canvasRef} />
+              <div ref={textLayerRef} className="btc-pdf-text-layer" />
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -2468,6 +2500,9 @@ function CourseOutlineModal({ course, driveStatus, onUpload, onDelete, onConnect
   );
 }
 
+const WEEK_TAB_KEYS = ["reading", "lecture", "files"];
+const WEEK_TAB_LABELS = { reading: "Reading notes", lecture: "Lecture notes", files: "Readings" };
+
 function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCourse, showToast, flashId, driveStatus, onUploadReading, onDeleteReading, onUploadCourseOutline, onDeleteCourseOutline, onConnectDrive }) {
   const week = course.weeks[weekNum - 1];
 
@@ -2532,6 +2567,40 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
 
   const [showOutlineModal, setShowOutlineModal] = useState(false);
 
+  // Optional split view: off by default (each tab full-width, one at a time).
+  // When on, the current tab and a chosen second tab render side by side.
+  const [splitOn, setSplitOn] = useState(false);
+  const [secondaryTab, setSecondaryTab] = useState("lecture");
+  const [splitRatio, setSplitRatio] = useState(0.5);
+  const splitRowRef = useRef(null);
+
+  useEffect(() => {
+    if (splitOn && secondaryTab === weekTab) {
+      setSecondaryTab(WEEK_TAB_KEYS.find((k) => k !== weekTab));
+    }
+  }, [splitOn, weekTab, secondaryTab]);
+
+  const startSplitResize = useCallback((e) => {
+    e.preventDefault();
+    const row = splitRowRef.current;
+    if (!row) return;
+    const rect = row.getBoundingClientRect();
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    const onMove = (ev) => {
+      const ratio = (ev.clientX - rect.left) / rect.width;
+      setSplitRatio(Math.min(0.8, Math.max(0.2, ratio)));
+    };
+    const onUp = () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, []);
+
   return (
     <div className="btc-week-view">
       <div className="btc-week-heading btc-heading-row">
@@ -2585,78 +2654,136 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
         >
           Readings
         </button>
+        <div className="btc-split-controls">
+          <button
+            className={`btc-btn btc-btn-outline small${splitOn ? " active" : ""}`}
+            onClick={() => setSplitOn((v) => !v)}
+            title="View two tabs side by side"
+          >
+            <Columns2 size={13} /> Split view
+          </button>
+          {splitOn && (
+            <select
+              className="btc-split-select"
+              value={secondaryTab}
+              onChange={(e) => setSecondaryTab(e.target.value)}
+              title="Second tab to show"
+            >
+              {WEEK_TAB_KEYS.filter((k) => k !== weekTab).map((k) => (
+                <option key={k} value={k}>
+                  {WEEK_TAB_LABELS[k]}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
       </div>
 
-      {weekTab === "reading" ? (
-        <div className="btc-tab-panel">
-          {week.readingNotes.length === 0 && (
-            <div className="btc-empty-panel">
-              <p>No reading notes for this week yet.</p>
-              <p className="btc-empty-sub">
-                Choose a case brief for a single case, a concept note to gather several
-                cases under one doctrine, or an evolution-of-law note to trace how a rule
-                changed over time.
-              </p>
+      <div className="btc-tab-split-row" ref={splitRowRef}>
+        <div
+          className="btc-tab-slot"
+          style={
+            weekTab === "reading"
+              ? { display: "block", order: 0, flex: splitOn ? `0 0 ${splitRatio * 100}%` : "1 1 auto" }
+              : secondaryTab === "reading" && splitOn
+              ? { display: "block", order: 2, flex: `0 0 ${(1 - splitRatio) * 100}%` }
+              : { display: "none" }
+          }
+        >
+          <div className="btc-tab-panel">
+            {week.readingNotes.length === 0 && (
+              <div className="btc-empty-panel">
+                <p>No reading notes for this week yet.</p>
+                <p className="btc-empty-sub">
+                  Choose a case brief for a single case, a concept note to gather several
+                  cases under one doctrine, or an evolution-of-law note to trace how a rule
+                  changed over time.
+                </p>
+              </div>
+            )}
+            <div className="btc-case-list">
+              {week.readingNotes.map((n, i) => (
+                <ReadingNoteCard
+                  key={n.id}
+                  index={i}
+                  note={n}
+                  flashId={flashId}
+                  onChange={(next) => updateNote(n.id, next)}
+                  onDelete={() => deleteNote(n.id)}
+                  onOutline={() => addNoteToOutline(n)}
+                  onPrewrite={() => sendNoteToPrewrite(n)}
+                />
+              ))}
             </div>
-          )}
-          <div className="btc-case-list">
-            {week.readingNotes.map((n, i) => (
-              <ReadingNoteCard
-                key={n.id}
-                index={i}
-                note={n}
-                flashId={flashId}
-                onChange={(next) => updateNote(n.id, next)}
-                onDelete={() => deleteNote(n.id)}
-                onOutline={() => addNoteToOutline(n)}
-                onPrewrite={() => sendNoteToPrewrite(n)}
-              />
-            ))}
-          </div>
-          <AddNoteMenu onAdd={addNote} />
-        </div>
-      ) : weekTab === "lecture" ? (
-        <div className="btc-tab-panel" id={`lecture-${course.id}-${weekNum}`}>
-          <div className={`btc-lecture-block${flashId === `lecture-${weekNum}` ? " btc-flash" : ""}`}>
-            <Field label="Class discussion">
-              <RichTextField
-                minHeight={120}
-                placeholder="What came up in class — hypotheticals, cold calls, points raised..."
-                value={week.lecture.discussion}
-                onChange={(html) => updateLecture("discussion", html)}
-              />
-            </Field>
-            <Field label="Professor's emphasis">
-              <RichTextField
-                minHeight={100}
-                placeholder="What the professor flagged as important or exam-relevant..."
-                value={week.lecture.emphasis}
-                onChange={(html) => updateLecture("emphasis", html)}
-              />
-            </Field>
-            <Field label="Key rules clarified">
-              <RichTextField
-                minHeight={100}
-                placeholder="Rules the professor restated, narrowed, or corrected..."
-                value={week.lecture.keyRules}
-                onChange={(html) => updateLecture("keyRules", html)}
-              />
-            </Field>
+            <AddNoteMenu onAdd={addNote} />
           </div>
         </div>
-      ) : (
-        <div className="btc-tab-panel">
-          <ReadingsPanel
-            week={week}
-            weekNum={weekNum}
-            driveStatus={driveStatus}
-            onUpload={onUploadReading}
-            onDelete={onDeleteReading}
-            onConnectDrive={onConnectDrive}
-            showToast={showToast}
-          />
+
+        <div
+          className="btc-tab-slot"
+          style={
+            weekTab === "lecture"
+              ? { display: "block", order: 0, flex: splitOn ? `0 0 ${splitRatio * 100}%` : "1 1 auto" }
+              : secondaryTab === "lecture" && splitOn
+              ? { display: "block", order: 2, flex: `0 0 ${(1 - splitRatio) * 100}%` }
+              : { display: "none" }
+          }
+        >
+          <div className="btc-tab-panel" id={`lecture-${course.id}-${weekNum}`}>
+            <div className={`btc-lecture-block${flashId === `lecture-${weekNum}` ? " btc-flash" : ""}`}>
+              <Field label="Class discussion">
+                <RichTextField
+                  minHeight={120}
+                  placeholder="What came up in class — hypotheticals, cold calls, points raised..."
+                  value={week.lecture.discussion}
+                  onChange={(html) => updateLecture("discussion", html)}
+                />
+              </Field>
+              <Field label="Professor's emphasis">
+                <RichTextField
+                  minHeight={100}
+                  placeholder="What the professor flagged as important or exam-relevant..."
+                  value={week.lecture.emphasis}
+                  onChange={(html) => updateLecture("emphasis", html)}
+                />
+              </Field>
+              <Field label="Key rules clarified">
+                <RichTextField
+                  minHeight={100}
+                  placeholder="Rules the professor restated, narrowed, or corrected..."
+                  value={week.lecture.keyRules}
+                  onChange={(html) => updateLecture("keyRules", html)}
+                />
+              </Field>
+            </div>
+          </div>
         </div>
-      )}
+
+        <div
+          className="btc-tab-slot"
+          style={
+            weekTab === "files"
+              ? { display: "block", order: 0, flex: splitOn ? `0 0 ${splitRatio * 100}%` : "1 1 auto" }
+              : secondaryTab === "files" && splitOn
+              ? { display: "block", order: 2, flex: `0 0 ${(1 - splitRatio) * 100}%` }
+              : { display: "none" }
+          }
+        >
+          <div className="btc-tab-panel">
+            <ReadingsPanel
+              week={week}
+              weekNum={weekNum}
+              driveStatus={driveStatus}
+              onUpload={onUploadReading}
+              onDelete={onDeleteReading}
+              onConnectDrive={onConnectDrive}
+              showToast={showToast}
+            />
+          </div>
+        </div>
+
+        {splitOn && <div className="btc-split-handle" style={{ order: 1 }} onMouseDown={startSplitResize} />}
+      </div>
 
       {showOutlineModal && (
         <CourseOutlineModal
@@ -4538,7 +4665,10 @@ function BaseStyles() {
       .btc-lede { color: var(--ink-soft); font-size: 0.98rem; margin-top: 8px; max-width: 62ch; line-height: 1.5; }
 
       /* ---------- Tabs ---------- */
-      .btc-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--rule); margin-bottom: 22px; }
+      .btc-tabs {
+        display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+        border-bottom: 1px solid var(--rule); margin-bottom: 22px;
+      }
       .btc-tab {
         background: none; border: none; padding: 9px 4px; margin-right: 20px;
         font-family: 'Inter', sans-serif; font-size: 0.88rem; color: var(--muted);
@@ -4546,6 +4676,24 @@ function BaseStyles() {
       }
       .btc-tab.active { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
       .btc-tab-panel { max-width: none; }
+
+      .btc-split-controls { margin-left: auto; display: flex; align-items: center; gap: 6px; padding-bottom: 6px; }
+      .btc-split-controls .btc-btn.active { background: var(--spine); color: #F5F0E1; border-color: var(--spine); }
+      .btc-split-select {
+        height: 30px; border: 1px solid var(--rule-strong); border-radius: 2px;
+        background: var(--paper-raised); color: var(--ink-soft); font-family: 'Inter', sans-serif;
+        font-size: 0.78rem; padding: 0 6px;
+      }
+      .btc-tab-split-row { display: flex; align-items: flex-start; width: 100%; }
+      .btc-tab-slot { min-width: 0; }
+      .btc-split-handle {
+        width: 14px; flex-shrink: 0; cursor: col-resize; position: relative; align-self: stretch;
+      }
+      .btc-split-handle::after {
+        content: ""; position: absolute; top: 0; bottom: 0; left: 6px; width: 2px;
+        background: var(--rule-strong); border-radius: 2px;
+      }
+      .btc-split-handle:hover::after { background: var(--spine); }
 
       /* ---------- Fields ---------- */
       .btc-field { margin-bottom: 14px; }
@@ -4740,6 +4888,16 @@ function BaseStyles() {
         align-items: flex-start; padding: 16px; background: var(--paper);
       }
       .btc-pdf-canvas-wrap canvas { box-shadow: 0 2px 10px rgba(0,0,0,0.18); max-width: 100%; }
+      .btc-pdf-page-wrap { position: relative; }
+      .btc-pdf-text-layer {
+        position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+        overflow: hidden; line-height: 1; opacity: 1;
+      }
+      .btc-pdf-text-layer span, .btc-pdf-text-layer br {
+        color: transparent; position: absolute; white-space: pre; cursor: text;
+        transform-origin: 0% 0%;
+      }
+      .btc-pdf-text-layer ::selection { background: rgba(31, 55, 55, 0.35); }
       .btc-pdf-error {
         margin: auto; text-align: center; color: var(--ink-soft);
         display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 30px;
