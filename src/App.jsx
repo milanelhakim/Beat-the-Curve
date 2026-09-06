@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { supabase, signInWithGoogleDrive, signOutOfGoogle } from "./supabaseClient";
 import {
   Search,
   Plus,
@@ -59,25 +60,13 @@ const STORAGE_KEY = "beat-the-curve-data-v1";
 const SCHEMA_VERSION = 3;
 
 /*
- * Google Drive sync config.
- * This Client ID is meant to be public — Google's browser (token) OAuth flow requires
- * it to ship in front-end code, the same way it appears in any single-page app. It does
- * NOT grant access by itself; every session still requires the signed-in user to approve
- * the consent screen, and the drive.file scope below only ever lets this app see files
- * it created itself — never the rest of the user's Drive.
- *
- * One-time setup in Google Cloud Console for this Client ID:
- *  1. Enable the "Google Drive API" for the project.
- *  2. Under "Authorized JavaScript origins", add your Vercel URL (and http://localhost:3000
- *     or whichever port you dev on) — without this, the token request fails silently.
- *  3. If the OAuth consent screen is still in "Testing" mode, add your own Google account
- *     under "Test users" or publish the app.
+ * Google Drive config. Auth now goes through Supabase's Google OAuth (see
+ * supabaseClient.js), which requests the drive.file scope as part of sign-in
+ * and hands back a usable access token via session.provider_token — no
+ * separate Google Identity Services connection step needed here anymore.
  */
-const GOOGLE_CLIENT_ID = "565952763033-16msfbpns5ec38nn93v0kb094k6hte62.apps.googleusercontent.com";
-const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 const DRIVE_FILE_NAME = "beat-the-curve-notebook.json";
-const DRIVE_FILE_ID_KEY = "beat-the-curve-drive-file-id";
-const DRIVE_WAS_CONNECTED_KEY = "beat-the-curve-drive-connected";
+const DRIVE_FILE_ID_KEY = "beat-the-curve-drive-file-id"; // legacy key, read once for migration
 const DRIVE_ROOT_FOLDER_NAME = "Beat the Curve";
 const DRIVE_MAP_KEY = "beat-the-curve-drive-map";
 const DRIVE_SYNC_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
@@ -986,24 +975,35 @@ function saveDriveMap(map) {
 }
 
 async function driveItemExists(fileId) {
+  const token = getDriveAccessToken();
+  if (!token || !fileId) return false;
   try {
-    const res = await window.gapi.client.drive.files.get({ fileId, fields: "id,trashed" });
-    return !!(res.result && !res.result.trashed);
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,trashed`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return false;
+    const json = await res.json();
+    return !json.trashed;
   } catch (e) {
     return false;
   }
 }
 
 async function driveCreateFolder(name, parentId) {
-  const res = await window.gapi.client.drive.files.create({
-    resource: {
+  const token = getDriveAccessToken();
+  if (!token) throw new Error("No Drive access token");
+  const res = await fetch("https://www.googleapis.com/drive/v3/files?fields=id", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
       name,
       mimeType: "application/vnd.google-apps.folder",
       parents: parentId ? [parentId] : undefined,
-    },
-    fields: "id",
+    }),
   });
-  return res.result.id;
+  if (!res.ok) throw new Error(`Drive folder create failed (${res.status})`);
+  const json = await res.json();
+  return json.id;
 }
 
 // Ensures a folder exists for the given cached id, verifying it's still there
@@ -1013,9 +1013,15 @@ async function ensureFolder(cachedId, name, parentId) {
   return driveCreateFolder(name, parentId);
 }
 
+// The active Google access token. Set from the Supabase session's
+// provider_token whenever auth state changes (see setDriveAccessToken in the
+// App component) — there is no longer a separate Google sign-in step.
+let _driveAccessToken = null;
 function getDriveAccessToken() {
-  const token = window.gapi && window.gapi.client && window.gapi.client.getToken();
-  return token ? token.access_token : null;
+  return _driveAccessToken;
+}
+function setDriveAccessToken(token) {
+  _driveAccessToken = token || null;
 }
 
 // gapi.client's `media` convenience parameter for files.create/update is
@@ -1115,17 +1121,19 @@ async function driveUpdateFile(fileId, content) {
 }
 
 async function driveReadFileContent(fileId) {
-  const res = await window.gapi.client.drive.files.get({ fileId, alt: "media" });
-  return typeof res.body === "string" ? res.body : JSON.stringify(res.result);
+  const blob = await driveDownloadBinary(fileId);
+  return blob.text();
 }
 
 async function driveMoveToFolder(fileId, newParentId) {
-  return window.gapi.client.drive.files.update({
-    fileId,
-    addParents: newParentId,
-    removeParents: "root",
-    fields: "id,parents",
-  });
+  const token = getDriveAccessToken();
+  if (!token) throw new Error("No Drive access token");
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${fileId}?addParents=${newParentId}&removeParents=root&fields=id,parents`,
+    { method: "PATCH", headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!res.ok) throw new Error(`Drive move failed (${res.status})`);
+  return res.json();
 }
 
 function buildSimpleHtmlDoc(title, bodyHtml) {
@@ -1152,7 +1160,12 @@ async function driveUpdateDoc(fileId, html) {
 }
 
 async function driveDeleteFile(fileId) {
-  return window.gapi.client.drive.files.delete({ fileId });
+  const token = getDriveAccessToken();
+  if (!token) return;
+  await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
 }
 
 // All of a course's weeks (that have content) combined into one block list,
@@ -3694,7 +3707,7 @@ function BackupMenu({
                 onConnectDrive();
               }}
             >
-              <Cloud size={14} /> Connect Google Drive
+              <Cloud size={14} /> Sign in with Google
             </button>
           ) : (
             <>
@@ -3735,7 +3748,7 @@ function BackupMenu({
                   onDisconnectDrive();
                 }}
               >
-                <CloudOff size={14} /> Disconnect Drive
+                <CloudOff size={14} /> Sign out
               </button>
             </>
           )}
@@ -3914,14 +3927,19 @@ export default function BeatTheCurve() {
   );
 
   // ---- Google Drive sync state ----
+  // Now driven by the Supabase session's Google provider_token instead of a
+  // separate Google Identity Services connection — see the auth effect below.
   const [driveStatus, setDriveStatus] = useState("disconnected");
   // disconnected | connecting | connected | syncing | synced | error
   const driveMapRef = useRef(loadDriveMap());
   const [driveFileId, setDriveFileId] = useState(() => driveMapRef.current.backupFileId || null);
   const [driveRootFolderId, setDriveRootFolderId] = useState(() => driveMapRef.current.rootFolderId || null);
   const driveStatusRef = useRef(driveStatus);
-  const tokenClientRef = useRef(null);
   const syncToDriveRef = useRef(() => {});
+
+  // ---- Supabase auth (Google sign-in) ----
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
 
   useEffect(() => {
     driveStatusRef.current = driveStatus;
@@ -3953,7 +3971,9 @@ export default function BeatTheCurve() {
     }
   }, []);
 
-  /* ---- save to localStorage (debounced) ---- */
+  /* ---- save to localStorage (debounced) ----
+     This runs first and unconditionally — the immediate offline fallback —
+     regardless of whether Supabase sync below succeeds or even applies. */
   useEffect(() => {
     if (!loaded) return;
     setSaveState("saving");
@@ -3967,6 +3987,117 @@ export default function BeatTheCurve() {
     }, 500);
     return () => clearTimeout(t);
   }, [data, loaded]);
+
+  /* ---- Supabase auth: restore/track the session, and mirror the Google
+     access token into the Drive helpers whenever it changes.
+     Note: Supabase only includes provider_token on the initial OAuth
+     redirect — it is not refreshed automatically, so Drive access will need
+     a fresh sign-in after the Google token expires (~1 hour) or after the
+     page is reloaded well after signing in. There's no purely client-side
+     way around this without a server-side token refresh step. */
+  useEffect(() => {
+    let mounted = true;
+    supabase.auth.getSession().then(({ data: { session: current } }) => {
+      if (!mounted) return;
+      setSession(current);
+      setAuthLoading(false);
+      if (current?.provider_token) {
+        setDriveAccessToken(current.provider_token);
+        setDriveStatus("connected");
+      }
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, next) => {
+      setSession(next);
+      if (next?.provider_token) {
+        setDriveAccessToken(next.provider_token);
+        setDriveStatus("connected");
+        syncToDriveRef.current();
+      } else if (!next) {
+        setDriveAccessToken(null);
+        setDriveStatus("disconnected");
+      }
+    });
+    return () => {
+      mounted = false;
+      listener.subscription.unsubscribe();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const signInWithGoogle = useCallback(async () => {
+    setDriveStatus("connecting");
+    const { error } = await signInWithGoogleDrive();
+    if (error) {
+      setDriveStatus("disconnected");
+      showToast("Couldn't start Google sign-in");
+    }
+    // On success the browser redirects away and back; onAuthStateChange
+    // above picks up the resulting session when the app reloads.
+  }, [showToast]);
+
+  const signOutGoogle = useCallback(async () => {
+    await signOutOfGoogle();
+    setDriveAccessToken(null);
+    setDriveStatus("disconnected");
+    showToast("Signed out");
+  }, [showToast]);
+
+  /* ---- Supabase real-time sync: pull this user's notes on sign-in, then
+     stay subscribed so edits on another device (Mac/iPad) apply here live. */
+  useEffect(() => {
+    if (!session?.user) return;
+    let channel;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data: row, error } = await supabase
+          .from("notes")
+          .select("data")
+          .eq("user_id", session.user.id)
+          .maybeSingle();
+        if (!cancelled && !error && row?.data) {
+          setData(hydrateData(row.data));
+        }
+      } catch (e) {
+        // fall through to local/Drive data rather than blocking the app
+      }
+      channel = supabase
+        .channel(`notes-${session.user.id}`)
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "notes", filter: `user_id=eq.${session.user.id}` },
+          (payload) => {
+            const incoming = payload.new && payload.new.data;
+            if (!incoming) return;
+            setData((current) => {
+              // Skip re-applying the change we just pushed ourselves.
+              if (JSON.stringify(incoming) === JSON.stringify(current)) return current;
+              return hydrateData(incoming);
+            });
+          }
+        )
+        .subscribe();
+    })();
+    return () => {
+      cancelled = true;
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, [session?.user?.id]);
+
+  /* ---- Supabase real-time sync: push local changes up (debounced), after
+     the immediate localStorage save above has already run. */
+  useEffect(() => {
+    if (!loaded || !session?.user) return;
+    const t = setTimeout(() => {
+      supabase
+        .from("notes")
+        .upsert({ user_id: session.user.id, data, updated_at: new Date().toISOString() })
+        .then(({ error }) => {
+          if (error) console.error("Supabase sync error:", error.message);
+        });
+    }, 800);
+    return () => clearTimeout(t);
+  }, [data, loaded, session?.user?.id]);
 
   /* ---- Google Drive: sync current data into the Drive folder structure ---- */
   const syncToDrive = useCallback(async () => {
@@ -3988,55 +4119,9 @@ export default function BeatTheCurve() {
     syncToDriveRef.current = syncToDrive;
   }, [syncToDrive]);
 
-  /* ---- Google Drive: connect / disconnect ---- */
-  const requestDriveToken = useCallback(
-    ({ silent } = {}) => {
-      if (!window.google || !window.google.accounts || !window.google.accounts.oauth2) {
-        if (!silent) showToast("Google sign-in is still loading — try again in a moment");
-        return;
-      }
-      if (!silent) setDriveStatus("connecting");
-      if (!tokenClientRef.current) {
-        tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
-          client_id: GOOGLE_CLIENT_ID,
-          scope: DRIVE_SCOPE,
-          callback: (resp) => {
-            if (resp.error) {
-              setDriveStatus((s) => (s === "connecting" ? "disconnected" : s));
-              if (!silent) showToast("Google Drive connection was cancelled");
-              return;
-            }
-            window.gapi.client.setToken({ access_token: resp.access_token });
-            setDriveStatus("connected");
-            try {
-              localStorage.setItem(DRIVE_WAS_CONNECTED_KEY, "1");
-            } catch (e) {}
-            if (!silent) showToast("Google Drive connected — organizing your folders…");
-            syncToDriveRef.current();
-          },
-        });
-      }
-      tokenClientRef.current.requestAccessToken({ prompt: silent ? "" : "consent" });
-    },
-    [showToast]
-  );
-
-  const disconnectDrive = useCallback(() => {
-    const token = window.gapi && window.gapi.client && window.gapi.client.getToken();
-    if (token && window.google && window.google.accounts && window.google.accounts.oauth2) {
-      window.google.accounts.oauth2.revoke(token.access_token, () => {});
-    }
-    if (window.gapi && window.gapi.client) window.gapi.client.setToken(null);
-    setDriveStatus("disconnected");
-    try {
-      localStorage.removeItem(DRIVE_WAS_CONNECTED_KEY);
-    } catch (e) {}
-    showToast("Google Drive disconnected");
-  }, [showToast]);
-
   const restoreFromDrive = useCallback(async () => {
     if (!driveFileId) {
-      showToast("Connect Google Drive first");
+      showToast("Sign in with Google first");
       return;
     }
     try {
@@ -4054,37 +4139,11 @@ export default function BeatTheCurve() {
 
   const syncNow = useCallback(() => {
     if (!["connected", "synced", "error"].includes(driveStatusRef.current)) {
-      showToast("Connect Google Drive first");
+      showToast("Sign in with Google first");
       return;
     }
     syncToDriveRef.current();
   }, [showToast]);
-
-  /* ---- Google Drive: load the GIS + gapi scripts once on mount ---- */
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([
-      loadExternalScript("https://accounts.google.com/gsi/client"),
-      loadExternalScript("https://apis.google.com/js/api.js"),
-    ])
-      .then(() => new Promise((resolve) => window.gapi.load("client", resolve)))
-      .then(() => window.gapi.client.load("drive", "v3"))
-      .then(() => {
-        if (cancelled) return;
-        let wasConnected = false;
-        try {
-          wasConnected = localStorage.getItem(DRIVE_WAS_CONNECTED_KEY) === "1";
-        } catch (e) {}
-        if (wasConnected) requestDriveToken({ silent: true });
-      })
-      .catch(() => {
-        if (!cancelled) showToast("Couldn't load Google Drive — check your connection");
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   /* ---- Google Drive: sync on a fixed timer, not on every keystroke ----
      This effect intentionally depends only on `loaded`, so it's set up once.
@@ -4395,6 +4454,11 @@ export default function BeatTheCurve() {
         <GlobalSearch courses={data.courses} onNavigate={handleSearchNavigate} />
 
         <div className="btc-header-right">
+          {session?.user?.email && (
+            <span className="btc-signed-in-as" title="Synced to this Google account">
+              {session.user.email}
+            </span>
+          )}
           <button
             className="btc-btn btc-btn-outline small"
             onClick={() => setDarkMode((v) => !v)}
@@ -4408,8 +4472,8 @@ export default function BeatTheCurve() {
             driveStatus={driveStatus}
             driveFileId={driveFileId}
             driveRootFolderId={driveRootFolderId}
-            onConnectDrive={() => requestDriveToken()}
-            onDisconnectDrive={disconnectDrive}
+            onConnectDrive={signInWithGoogle}
+            onDisconnectDrive={signOutGoogle}
             onRestoreFromDrive={restoreFromDrive}
             onSyncNow={syncNow}
           />
@@ -4495,7 +4559,7 @@ export default function BeatTheCurve() {
                     onDeleteReading={deleteReadingPdf}
                     onUploadCourseOutline={uploadCourseOutline}
                     onDeleteCourseOutline={deleteCourseOutline}
-                    onConnectDrive={() => requestDriveToken()}
+                    onConnectDrive={signInWithGoogle}
                   />
                 ) : nav.synthTab === "outline" ? (
                   <OutlineView
@@ -4619,6 +4683,10 @@ function BaseStyles() {
         color: var(--ink);
       }
       .btc-header-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+      .btc-signed-in-as {
+        font-family: 'Inter', sans-serif; font-size: 0.76rem; color: var(--muted);
+        max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
       .btc-save-indicator {
         font-family: 'Inter', sans-serif;
         font-size: 0.72rem;
