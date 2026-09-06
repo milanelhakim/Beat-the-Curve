@@ -2671,21 +2671,30 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
     } catch (e) {}
   }, [tabOrder]);
   const draggedTabRef = useRef(null);
+  const [draggedTab, setDraggedTab] = useState(null);
   const handleTabDragStart = (key) => (e) => {
     draggedTabRef.current = key;
+    setDraggedTab(key);
     e.dataTransfer.effectAllowed = "move";
+    // Firefox refuses to initiate a drag at all unless data is actually set.
+    e.dataTransfer.setData("text/plain", key);
   };
   const handleTabDragOver = (e) => e.preventDefault();
   const handleTabDrop = (targetKey) => (e) => {
     e.preventDefault();
     const draggedKey = draggedTabRef.current;
     draggedTabRef.current = null;
+    setDraggedTab(null);
     if (!draggedKey || draggedKey === targetKey) return;
     setTabOrder((order) => {
       const next = order.filter((k) => k !== draggedKey);
       next.splice(next.indexOf(targetKey), 0, draggedKey);
       return next;
     });
+  };
+  const handleTabDragEnd = () => {
+    draggedTabRef.current = null;
+    setDraggedTab(null);
   };
 
   useEffect(() => {
@@ -2747,17 +2756,6 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
       <div className="btc-tabs">
         {tabOrder.map((key) => (
           <span className="btc-tab-item" key={key}>
-            <button
-              draggable
-              onDragStart={handleTabDragStart(key)}
-              onDragOver={handleTabDragOver}
-              onDrop={handleTabDrop(key)}
-              className={`btc-tab${weekTab === key ? " active" : ""}`}
-              onClick={() => setWeekTab(key)}
-              title="Drag to reorder"
-            >
-              {WEEK_TAB_LABELS[key]}
-            </button>
             {key === "reading" && (
               <DownloadMenu
                 iconOnly
@@ -2776,6 +2774,26 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
                 showToast={showToast}
               />
             )}
+            <div
+              role="tab"
+              tabIndex={0}
+              draggable
+              onDragStart={handleTabDragStart(key)}
+              onDragOver={handleTabDragOver}
+              onDrop={handleTabDrop(key)}
+              onDragEnd={handleTabDragEnd}
+              className={`btc-tab${weekTab === key ? " active" : ""}${draggedTab === key ? " dragging" : ""}`}
+              onClick={() => setWeekTab(key)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setWeekTab(key);
+                }
+              }}
+              title="Drag to reorder"
+            >
+              {WEEK_TAB_LABELS[key]}
+            </div>
           </span>
         ))}
         <div className="btc-split-controls">
@@ -4774,7 +4792,8 @@ function BaseStyles() {
       }
       .btc-root button:focus-visible,
       .btc-root input:focus-visible,
-      .btc-root textarea:focus-visible {
+      .btc-root textarea:focus-visible,
+      .btc-root [role="tab"]:focus-visible {
         outline: 2px solid var(--spine);
         outline-offset: 1px;
       }
@@ -4996,7 +5015,10 @@ function BaseStyles() {
         background: none; border: none; padding: 9px 4px; margin-right: 20px;
         font-family: 'Inter', sans-serif; font-size: 0.88rem; color: var(--muted);
         border-bottom: 2px solid transparent; transform: translateY(1px);
+        cursor: grab; user-select: none; -webkit-user-drag: element;
       }
+      .btc-tab:active { cursor: grabbing; }
+      .btc-tab.dragging { opacity: 0.4; }
       .btc-tab.active { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
       .btc-tab-panel { max-width: none; }
 
@@ -5287,10 +5309,6 @@ function BaseStyles() {
       .btc-assignment-input.name { flex: 1.6; min-width: 140px; }
       .btc-assignment-input.weight { flex: 0.6; min-width: 80px; }
       .btc-assignment-input.date { flex: 0.9; min-width: 150px; font-family: 'Inter', sans-serif; }
-
-      /* ---------- Draggable week tabs ---------- */
-      .btc-tab { cursor: grab; }
-      .btc-tab:active { cursor: grabbing; }
 
       /* ---------- Download menu ---------- */
       .btc-download-wrap { position: relative; display: inline-block; }
