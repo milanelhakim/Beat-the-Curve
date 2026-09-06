@@ -3635,6 +3635,33 @@ function ConfirmDialog({ course, onCancel, onConfirm }) {
   );
 }
 
+function SignOutConfirmDialog({ open, email, onCancel, onConfirm }) {
+  if (!open) return null;
+  return (
+    <div className="btc-modal-scrim" onMouseDown={onCancel}>
+      <div className="btc-modal" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="btc-modal-icon">
+          <CloudOff size={18} />
+        </div>
+        <h2 className="btc-modal-title">Sign out{email ? ` of ${email}` : ""}?</h2>
+        <p className="btc-modal-body">
+          This clears your notes from this device and stops syncing until you sign back
+          in. Nothing is deleted from your account — signing back in brings everything
+          back.
+        </p>
+        <div className="btc-modal-actions">
+          <button className="btc-btn btc-btn-outline" onClick={onCancel}>
+            Cancel
+          </button>
+          <button className="btc-btn btc-btn-danger" onClick={onConfirm}>
+            <CloudOff size={14} /> Sign out
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function driveStatusLabel(status) {
   switch (status) {
     case "connecting":
@@ -3846,6 +3873,7 @@ export default function BeatTheCurve() {
   const [flashId, setFlashId] = useState(null);
   const [toast, setToast] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [confirmSignOutOpen, setConfirmSignOutOpen] = useState(false);
   const [pendingImport, setPendingImport] = useState(null);
   const fileInputRef = useRef(null);
 
@@ -4031,9 +4059,18 @@ export default function BeatTheCurve() {
   }, [showToast]);
 
   /* ---- Supabase real-time sync: pull this user's notes on sign-in, then
-     stay subscribed so edits on another device (Mac/iPad) apply here live. */
+     stay subscribed so edits on another device (Mac/iPad) apply here live.
+     cloudSyncReady only flips true once this initial pull attempt finishes
+     (found data, found nothing, or errored) — the push effect below waits
+     for it, so a stale/empty local `data` can never race ahead and overwrite
+     the real cloud copy before it's even had a chance to load in. */
+  const [cloudSyncReady, setCloudSyncReady] = useState(false);
   useEffect(() => {
-    if (!session?.user) return;
+    if (!session?.user) {
+      setCloudSyncReady(false);
+      return;
+    }
+    setCloudSyncReady(false);
     let channel;
     let cancelled = false;
     (async () => {
@@ -4052,6 +4089,8 @@ export default function BeatTheCurve() {
         }
       } catch (e) {
         console.error("Supabase fetch error:", e);
+      } finally {
+        if (!cancelled) setCloudSyncReady(true);
       }
       channel = supabase
         .channel(`notes-${session.user.id}`)
@@ -4078,9 +4117,10 @@ export default function BeatTheCurve() {
   }, [session?.user?.id]);
 
   /* ---- Supabase real-time sync: push local changes up (debounced), after
-     the immediate localStorage save above has already run. */
+     the immediate localStorage save above has already run, and only once
+     the initial cloud pull for this session has completed. */
   useEffect(() => {
-    if (!loaded || !session?.user) return;
+    if (!loaded || !session?.user || !cloudSyncReady) return;
     const t = setTimeout(() => {
       supabase
         .from("notes")
@@ -4096,7 +4136,7 @@ export default function BeatTheCurve() {
         });
     }, 800);
     return () => clearTimeout(t);
-  }, [data, loaded, session?.user?.id, showToast]);
+  }, [data, loaded, session?.user?.id, cloudSyncReady, showToast]);
 
   /* ---- Google Drive: sync current data into the Drive folder structure ---- */
   const syncToDrive = useCallback(async () => {
@@ -4459,7 +4499,7 @@ export default function BeatTheCurve() {
             </span>
           )}
           {session?.user ? (
-            <button className="btc-btn btc-btn-outline small" onClick={signOutGoogle}>
+            <button className="btc-btn btc-btn-outline small" onClick={() => setConfirmSignOutOpen(true)}>
               <CloudOff size={14} /> Sign out
             </button>
           ) : (
@@ -4596,6 +4636,15 @@ export default function BeatTheCurve() {
         onConfirm={performDeleteCourse}
       />
       <ImportConfirmDialog pending={pendingImport} onCancel={cancelImport} onConfirm={confirmImport} />
+      <SignOutConfirmDialog
+        open={confirmSignOutOpen}
+        email={session?.user?.email}
+        onCancel={() => setConfirmSignOutOpen(false)}
+        onConfirm={() => {
+          setConfirmSignOutOpen(false);
+          signOutGoogle();
+        }}
+      />
     </div>
   );
 }
