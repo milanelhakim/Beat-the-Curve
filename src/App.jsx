@@ -38,6 +38,9 @@ import {
   Sun,
   Moon,
   Link,
+  ZoomIn,
+  ZoomOut,
+  ChevronLeft,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
@@ -50,7 +53,10 @@ const STORAGE_KEY = "beat-the-curve-data-v1";
 // v2: added week.title (editable tab labels) and case-brief dissent fields
 //     (includeDissent, dissentSummary, dissentSignificance). Both are additive —
 //     hydrate* below fills them in with safe defaults on any older saved data.
-const SCHEMA_VERSION = 2;
+// v3: added week.readings (uploaded PDF references, stored in Drive — only the
+//     Drive fileId/name/uploadedAt live locally) and course.outlinePdf (a single
+//     PDF reference per course). Both additive, same safe-default hydration.
+const SCHEMA_VERSION = 3;
 
 /*
  * Google Drive sync config.
@@ -99,6 +105,7 @@ function makeWeek(weekNum) {
     title: "",
     readingNotes: [],
     lecture: { discussion: "", emphasis: "", keyRules: "" },
+    readings: [], // uploaded PDF references: { id, fileId, name, uploadedAt }
   };
 }
 
@@ -115,6 +122,7 @@ function makeCourse(name) {
     weeks: Array.from({ length: WEEK_COUNT }, (_, i) => makeWeek(i + 1)),
     outline: [],
     prewrites: [],
+    outlinePdf: null, // single course-wide PDF reference: { fileId, name, uploadedAt }
   };
 }
 
@@ -272,6 +280,25 @@ function hydrateLecture(l) {
   };
 }
 
+function hydrateReadingFile(r) {
+  if (!r || typeof r !== "object" || !r.fileId) return null;
+  return {
+    id: r.id || uid("pdf"),
+    fileId: r.fileId,
+    name: typeof r.name === "string" && r.name.trim() ? r.name : "Untitled.pdf",
+    uploadedAt: typeof r.uploadedAt === "number" ? r.uploadedAt : Date.now(),
+  };
+}
+
+function hydrateOutlinePdf(o) {
+  if (!o || typeof o !== "object" || !o.fileId) return null;
+  return {
+    fileId: o.fileId,
+    name: typeof o.name === "string" && o.name.trim() ? o.name : "Course Outline.pdf",
+    uploadedAt: typeof o.uploadedAt === "number" ? o.uploadedAt : Date.now(),
+  };
+}
+
 function hydrateWeek(w, weekNum) {
   if (!w || typeof w !== "object") return makeWeek(weekNum);
   return {
@@ -279,6 +306,7 @@ function hydrateWeek(w, weekNum) {
     title: typeof w.title === "string" ? w.title : "",
     readingNotes: Array.isArray(w.readingNotes) ? w.readingNotes.map(hydrateNote) : [],
     lecture: hydrateLecture(w.lecture),
+    readings: Array.isArray(w.readings) ? w.readings.map(hydrateReadingFile).filter(Boolean) : [],
   };
 }
 
@@ -317,6 +345,7 @@ function hydrateCourse(c) {
     weeks,
     outline: Array.isArray(c.outline) ? c.outline.map(hydrateOutlineSection) : [],
     prewrites: Array.isArray(c.prewrites) ? c.prewrites.map(hydratePrewrite) : [],
+    outlinePdf: hydrateOutlinePdf(c.outlinePdf),
   };
 }
 
@@ -422,7 +451,8 @@ function weekHasContent(week) {
   const hasLecture = [week.lecture.discussion, week.lecture.emphasis, week.lecture.keyRules].some(
     (v) => !htmlIsBlank(v)
   );
-  return hasNote || hasLecture;
+  const hasReadings = Array.isArray(week.readings) && week.readings.length > 0;
+  return hasNote || hasLecture || hasReadings;
 }
 
 function compileNoteContent(note) {
@@ -713,10 +743,21 @@ function lectureBlocks(week) {
   ];
 }
 
+function readingsBlocks(week) {
+  if (!week.readings || !week.readings.length) return [];
+  const blocks = [{ type: "p", text: "Readings attached (view in the app or the course's Drive folder):" }];
+  week.readings.forEach((r) => blocks.push({ type: "li", text: r.name }));
+  return blocks;
+}
+
 function weekToBlocks(week) {
   const blocks = [{ type: "h2", text: weekLabel(week) }];
   blocks.push({ type: "h3", text: "Reading notes" });
   blocks.push(...readingNotesBlocks(week));
+  if (week.readings && week.readings.length) {
+    blocks.push({ type: "h3", text: "Readings" });
+    blocks.push(...readingsBlocks(week));
+  }
   blocks.push({ type: "h3", text: "Lecture notes" });
   blocks.push(...lectureBlocks(week));
   blocks.push({ type: "space" });
@@ -1026,6 +1067,44 @@ async function driveMediaUpdate(fileId, mimeType, content) {
   return res.json();
 }
 
+// Binary uploads (PDFs) can't go through driveMultipartCreate — that builds the
+// multipart body as a JS string, and string concatenation of binary bytes
+// corrupts them. Blob concatenation (metadata string + the real file Blob +
+// closing boundary string) preserves the bytes exactly.
+async function driveUploadBinary(metadata, mimeType, fileBlob) {
+  const token = getDriveAccessToken();
+  if (!token) throw new Error("No Drive access token");
+  const boundary = "btc_" + Math.random().toString(36).slice(2);
+  const head = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(
+    metadata
+  )}\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`;
+  const tail = `\r\n--${boundary}--`;
+  const body = new Blob([head, fileBlob, tail]);
+  const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": `multipart/related; boundary=${boundary}`,
+    },
+    body,
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Drive upload failed (${res.status}): ${errText}`);
+  }
+  return res.json();
+}
+
+async function driveDownloadBinary(fileId) {
+  const token = getDriveAccessToken();
+  if (!token) throw new Error("No Drive access token");
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`Drive download failed (${res.status})`);
+  return res.blob();
+}
+
 async function driveCreateFile(content, parentId) {
   const metadata = { name: DRIVE_FILE_NAME, mimeType: "application/json", parents: parentId ? [parentId] : undefined };
   return driveMultipartCreate(metadata, "application/json", content);
@@ -1166,7 +1245,7 @@ async function runDriveSync(data, mapIn) {
       }
     }
 
-    map.courses[course.id] = { folderId, docId };
+    map.courses[course.id] = { ...existing, folderId, docId };
   }
 
   return { map, hadError };
@@ -1180,6 +1259,20 @@ function loadJsPDF() {
     ).then((mod) => mod.jsPDF || mod.default);
   }
   return jsPDFPromise;
+}
+
+const PDFJS_VERSION = "3.11.174";
+let pdfJsPromise = null;
+function loadPdfJs() {
+  if (!pdfJsPromise) {
+    pdfJsPromise = loadExternalScript(
+      `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.min.js`
+    ).then(() => {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.js`;
+      return window.pdfjsLib;
+    });
+  }
+  return pdfJsPromise;
 }
 
 async function blocksToPdfAndSave(blocks, filename) {
@@ -1656,6 +1749,185 @@ function NoteActions({ onOutline, onPrewrite, onDelete }) {
   );
 }
 
+function PdfViewer({ blob, fileId, onMissing }) {
+  const [pdfjsLib, setPdfjsLib] = useState(null);
+  const [pdfDoc, setPdfDoc] = useState(null);
+  const [numPages, setNumPages] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [scale, setScale] = useState(1.15);
+  const [status, setStatus] = useState("loading"); // loading | ready | error
+  const canvasRef = useRef(null);
+  const thumbRefs = useRef({});
+  const renderTaskRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadPdfJs()
+      .then((lib) => {
+        if (!cancelled) setPdfjsLib(lib);
+      })
+      .catch(() => {
+        if (!cancelled) setStatus("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!pdfjsLib) return;
+    let cancelled = false;
+    setStatus("loading");
+    setPdfDoc(null);
+    (async () => {
+      try {
+        let sourceBlob = blob;
+        if (!sourceBlob && fileId) sourceBlob = await driveDownloadBinary(fileId);
+        if (!sourceBlob) throw new Error("No PDF source");
+        const data = await sourceBlob.arrayBuffer();
+        const doc = await pdfjsLib.getDocument({ data }).promise;
+        if (cancelled) return;
+        setPdfDoc(doc);
+        setNumPages(doc.numPages);
+        setCurrentPage(1);
+        setStatus("ready");
+      } catch (e) {
+        if (!cancelled) setStatus("error");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pdfjsLib, blob, fileId]);
+
+  useEffect(() => {
+    if (!pdfDoc || !canvasRef.current) return;
+    let cancelled = false;
+    (async () => {
+      const page = await pdfDoc.getPage(currentPage);
+      if (cancelled) return;
+      const viewport = page.getViewport({ scale });
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext("2d");
+      if (renderTaskRef.current) {
+        try {
+          renderTaskRef.current.cancel();
+        } catch (e) {}
+      }
+      const task = page.render({ canvasContext: ctx, viewport });
+      renderTaskRef.current = task;
+      try {
+        await task.promise;
+      } catch (e) {
+        // render cancelled by a newer page/zoom change — safe to ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pdfDoc, currentPage, scale]);
+
+  useEffect(() => {
+    if (!pdfDoc) return;
+    let cancelled = false;
+    (async () => {
+      for (let i = 1; i <= pdfDoc.numPages; i++) {
+        if (cancelled) return;
+        const canvas = thumbRefs.current[i];
+        if (!canvas) continue;
+        try {
+          const page = await pdfDoc.getPage(i);
+          if (cancelled) return;
+          const viewport = page.getViewport({ scale: 0.16 });
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const ctx = canvas.getContext("2d");
+          await page.render({ canvasContext: ctx, viewport }).promise;
+        } catch (e) {
+          // a single failed thumbnail shouldn't block the rest
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pdfDoc]);
+
+  if (status === "error") {
+    return (
+      <div className="btc-pdf-error">
+        <p>Couldn't load this PDF.</p>
+        {onMissing && (
+          <button className="btc-btn btc-btn-outline small" onClick={onMissing}>
+            <Trash2 size={13} /> Remove it
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="btc-pdf-viewer">
+      <div className="btc-pdf-thumbs">
+        {status === "loading" && !numPages ? (
+          <div className="btc-pdf-thumbs-loading">
+            <Loader2 size={16} className="btc-spin" />
+          </div>
+        ) : (
+          Array.from({ length: numPages }, (_, i) => i + 1).map((n) => (
+            <button
+              key={n}
+              className={`btc-pdf-thumb${n === currentPage ? " active" : ""}`}
+              onClick={() => setCurrentPage(n)}
+            >
+              <canvas ref={(el) => (thumbRefs.current[n] = el)} />
+              <span>{n}</span>
+            </button>
+          ))
+        )}
+      </div>
+      <div className="btc-pdf-main">
+        <div className="btc-pdf-toolbar">
+          <button
+            className="btc-icon-btn"
+            title="Previous page"
+            disabled={currentPage <= 1}
+            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+          >
+            <ChevronLeft size={15} />
+          </button>
+          <span className="btc-pdf-page-indicator">
+            {numPages ? `Page ${currentPage} of ${numPages}` : "—"}
+          </span>
+          <button
+            className="btc-icon-btn"
+            title="Next page"
+            disabled={currentPage >= numPages}
+            onClick={() => setCurrentPage((p) => Math.min(numPages, p + 1))}
+          >
+            <ChevronRight size={15} />
+          </button>
+          <span className="btc-rte-sep" />
+          <button className="btc-icon-btn" title="Zoom out" onClick={() => setScale((s) => Math.max(0.5, s - 0.15))}>
+            <ZoomOut size={14} />
+          </button>
+          <button className="btc-icon-btn" title="Zoom in" onClick={() => setScale((s) => Math.min(3, s + 0.15))}>
+            <ZoomIn size={14} />
+          </button>
+        </div>
+        <div className="btc-pdf-canvas-wrap">
+          {status === "loading" ? <Loader2 size={20} className="btc-spin" /> : <canvas ref={canvasRef} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function CaseBriefCard({ index, data, onChange, onDelete, onOutline, onPrewrite, flashId }) {
   const isFlash = flashId === data.id;
   return (
@@ -2059,7 +2331,144 @@ function EditableWeekTitle({ week, onRename }) {
   );
 }
 
-function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCourse, showToast, flashId }) {
+function ReadingsPanel({ week, weekNum, driveStatus, onUpload, onDelete, onConnectDrive, showToast }) {
+  const [selectedId, setSelectedId] = useState(null);
+  const fileInputRef = useRef(null);
+  const readings = week.readings || [];
+  const selected = readings.find((r) => r.id === selectedId) || readings[0] || null;
+
+  useEffect(() => {
+    if (!readings.some((r) => r.id === selectedId)) {
+      setSelectedId(readings[0] ? readings[0].id : null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [week.weekNum, readings.length]);
+
+  if (driveStatus === "disconnected") {
+    return (
+      <div className="btc-drive-required">
+        <Cloud size={22} />
+        <p>Connect Google Drive to upload and view this week's readings.</p>
+        <button className="btc-btn btc-btn-primary" onClick={onConnectDrive}>
+          Connect Google Drive
+        </button>
+      </div>
+    );
+  }
+
+  const handleFiles = (fileList) => {
+    Array.from(fileList).forEach((file) => {
+      if (file.type !== "application/pdf") {
+        showToast("Only PDF files are supported");
+        return;
+      }
+      onUpload(weekNum, file);
+    });
+  };
+
+  return (
+    <div className="btc-readings-panel">
+      <div className="btc-readings-list">
+        {readings.map((r) => (
+          <div key={r.id} className={`btc-reading-chip${selected && selected.id === r.id ? " active" : ""}`}>
+            <button className="btc-reading-chip-name" onClick={() => setSelectedId(r.id)}>
+              <FileText size={13} /> {r.name}
+            </button>
+            <button className="btc-icon-btn small" title="Remove" onClick={() => onDelete(weekNum, r.id)}>
+              <Trash2 size={12} />
+            </button>
+          </div>
+        ))}
+        <button className="btc-btn btc-btn-outline small" onClick={() => fileInputRef.current.click()}>
+          <Upload size={13} /> Upload reading (PDF)
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/pdf"
+          multiple
+          style={{ display: "none" }}
+          onChange={(e) => {
+            handleFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
+      </div>
+      {readings.length === 0 ? (
+        <div className="btc-empty-panel">
+          <p>No readings uploaded for this week yet.</p>
+          <p className="btc-empty-sub">
+            Upload as many PDFs as you need — casebook excerpts, articles, slides — and switch between them here.
+          </p>
+        </div>
+      ) : (
+        selected && <PdfViewer key={selected.id} fileId={selected.fileId} onMissing={() => onDelete(weekNum, selected.id)} />
+      )}
+    </div>
+  );
+}
+
+function CourseOutlineModal({ course, driveStatus, onUpload, onDelete, onConnectDrive, onClose }) {
+  const fileInputRef = useRef(null);
+  return (
+    <div className="btc-modal-scrim btc-pdf-modal-scrim" onMouseDown={onClose}>
+      <div className="btc-pdf-modal" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="btc-pdf-modal-head">
+          <h2 className="btc-modal-title">{course.name} — Course Outline</h2>
+          <div className="btc-pdf-modal-actions">
+            {course.outlinePdf && driveStatus !== "disconnected" && (
+              <button className="btc-btn btc-btn-outline small" onClick={() => fileInputRef.current.click()}>
+                <Upload size={13} /> Replace
+              </button>
+            )}
+            {course.outlinePdf && (
+              <button className="btc-btn btc-btn-outline small" onClick={onDelete}>
+                <Trash2 size={13} /> Remove
+              </button>
+            )}
+            <button className="btc-icon-btn" title="Close" onClick={onClose}>
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/pdf"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const file = e.target.files && e.target.files[0];
+            e.target.value = "";
+            if (file) onUpload(file);
+          }}
+        />
+        <div className="btc-pdf-modal-body">
+          {driveStatus === "disconnected" ? (
+            <div className="btc-drive-required">
+              <Cloud size={22} />
+              <p>Connect Google Drive to upload and view the course outline.</p>
+              <button className="btc-btn btc-btn-primary" onClick={onConnectDrive}>
+                Connect Google Drive
+              </button>
+            </div>
+          ) : course.outlinePdf ? (
+            <PdfViewer fileId={course.outlinePdf.fileId} onMissing={onDelete} />
+          ) : (
+            <div className="btc-pdf-upload-prompt">
+              <FileText size={28} />
+              <p>No course outline uploaded yet.</p>
+              <button className="btc-btn btc-btn-primary" onClick={() => fileInputRef.current.click()}>
+                <Upload size={14} /> Upload Course Outline Here
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCourse, showToast, flashId, driveStatus, onUploadReading, onDeleteReading, onUploadCourseOutline, onDeleteCourseOutline, onConnectDrive }) {
   const week = course.weeks[weekNum - 1];
 
   const updateNote = (noteId, next) => {
@@ -2121,12 +2530,19 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
     updateWeek(weekNum, { ...week, title });
   };
 
+  const [showOutlineModal, setShowOutlineModal] = useState(false);
+
   return (
     <div className="btc-week-view">
       <div className="btc-week-heading btc-heading-row">
         <div>
           <span className="btc-week-eyebrow">{course.name}</span>
-          <EditableWeekTitle week={week} onRename={renameWeek} />
+          <div className="btc-week-title-row-outer">
+            <button className="btc-btn btc-btn-outline small btc-course-outline-btn" onClick={() => setShowOutlineModal(true)}>
+              <BookOpen size={13} /> Course Outline
+            </button>
+            <EditableWeekTitle week={week} onRename={renameWeek} />
+          </div>
         </div>
         <div className="btc-week-download-group">
           <DownloadMenu
@@ -2163,6 +2579,12 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
         >
           Lecture notes
         </button>
+        <button
+          className={`btc-tab${weekTab === "files" ? " active" : ""}`}
+          onClick={() => setWeekTab("files")}
+        >
+          Readings
+        </button>
       </div>
 
       {weekTab === "reading" ? (
@@ -2193,7 +2615,7 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
           </div>
           <AddNoteMenu onAdd={addNote} />
         </div>
-      ) : (
+      ) : weekTab === "lecture" ? (
         <div className="btc-tab-panel" id={`lecture-${course.id}-${weekNum}`}>
           <div className={`btc-lecture-block${flashId === `lecture-${weekNum}` ? " btc-flash" : ""}`}>
             <Field label="Class discussion">
@@ -2222,6 +2644,29 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
             </Field>
           </div>
         </div>
+      ) : (
+        <div className="btc-tab-panel">
+          <ReadingsPanel
+            week={week}
+            weekNum={weekNum}
+            driveStatus={driveStatus}
+            onUpload={onUploadReading}
+            onDelete={onDeleteReading}
+            onConnectDrive={onConnectDrive}
+            showToast={showToast}
+          />
+        </div>
+      )}
+
+      {showOutlineModal && (
+        <CourseOutlineModal
+          course={course}
+          driveStatus={driveStatus}
+          onUpload={onUploadCourseOutline}
+          onDelete={onDeleteCourseOutline}
+          onConnectDrive={onConnectDrive}
+          onClose={() => setShowOutlineModal(false)}
+        />
       )}
     </div>
   );
@@ -3484,6 +3929,127 @@ export default function BeatTheCurve() {
     [currentCourse, updateCourse]
   );
 
+  // Ensures "Beat the Curve" > "<Course>" (and, if requested, its "Readings"
+  // subfolder) exist in the Drive map, creating whatever's missing.
+  // Ensures the Drive folders a given operation needs exist, creating whatever's
+  // missing. Structure: "Beat the Curve" > "<Course>" > "Readings" > "Week N"
+  // (one subfolder per week) and, separately, "<Course>" > "Course Outline".
+  const ensureCourseFolders = useCallback(async (course, opts = {}) => {
+    const map = driveMapRef.current;
+    map.rootFolderId = await ensureFolder(map.rootFolderId, DRIVE_ROOT_FOLDER_NAME, null);
+    const entry = map.courses[course.id] || {
+      folderId: null,
+      docId: null,
+      readingsFolderId: null,
+      outlineFolderId: null,
+      weekFolders: {},
+    };
+    entry.weekFolders = entry.weekFolders || {};
+    entry.folderId = await ensureFolder(entry.folderId, course.name, map.rootFolderId);
+
+    let weekFolderId = null;
+    if (opts.weekNum) {
+      entry.readingsFolderId = await ensureFolder(entry.readingsFolderId, "Readings", entry.folderId);
+      entry.weekFolders[opts.weekNum] = await ensureFolder(
+        entry.weekFolders[opts.weekNum],
+        `Week ${opts.weekNum}`,
+        entry.readingsFolderId
+      );
+      weekFolderId = entry.weekFolders[opts.weekNum];
+    }
+
+    let outlineFolderId = null;
+    if (opts.outline) {
+      entry.outlineFolderId = await ensureFolder(entry.outlineFolderId, "Course Outline", entry.folderId);
+      outlineFolderId = entry.outlineFolderId;
+    }
+
+    map.courses[course.id] = entry;
+    driveMapRef.current = map;
+    saveDriveMap(map);
+    return { folderId: entry.folderId, weekFolderId, outlineFolderId };
+  }, []);
+
+  const uploadReadingPdf = useCallback(
+    async (weekNum, file) => {
+      if (!currentCourse) return;
+      if (driveStatusRef.current === "disconnected") {
+        showToast("Connect Google Drive first");
+        return;
+      }
+      showToast("Uploading…");
+      try {
+        const { weekFolderId } = await ensureCourseFolders(currentCourse, { weekNum });
+        const result = await driveUploadBinary(
+          { name: file.name, mimeType: "application/pdf", parents: [weekFolderId] },
+          "application/pdf",
+          file
+        );
+        const week = currentCourse.weeks[weekNum - 1];
+        const nextReadings = [
+          ...(week.readings || []),
+          { id: uid("pdf"), fileId: result.id, name: file.name, uploadedAt: Date.now() },
+        ];
+        updateWeek(weekNum, { ...week, readings: nextReadings });
+        showToast("Reading uploaded");
+      } catch (e) {
+        showToast("Couldn't upload — check your Drive connection");
+      }
+    },
+    [currentCourse, updateWeek, ensureCourseFolders, showToast]
+  );
+
+  const deleteReadingPdf = useCallback(
+    (weekNum, readingId) => {
+      if (!currentCourse) return;
+      const week = currentCourse.weeks[weekNum - 1];
+      const reading = (week.readings || []).find((r) => r.id === readingId);
+      updateWeek(weekNum, { ...week, readings: (week.readings || []).filter((r) => r.id !== readingId) });
+      if (reading) {
+        driveDeleteFile(reading.fileId).catch(() => {});
+      }
+    },
+    [currentCourse, updateWeek]
+  );
+
+  const uploadCourseOutline = useCallback(
+    async (file) => {
+      if (!currentCourse) return;
+      if (driveStatusRef.current === "disconnected") {
+        showToast("Connect Google Drive first");
+        return;
+      }
+      showToast("Uploading…");
+      try {
+        const { outlineFolderId } = await ensureCourseFolders(currentCourse, { outline: true });
+        const oldOutline = currentCourse.outlinePdf;
+        const result = await driveUploadBinary(
+          { name: file.name, mimeType: "application/pdf", parents: [outlineFolderId] },
+          "application/pdf",
+          file
+        );
+        updateCourse({
+          ...currentCourse,
+          outlinePdf: { fileId: result.id, name: file.name, uploadedAt: Date.now() },
+        });
+        if (oldOutline && oldOutline.fileId) {
+          driveDeleteFile(oldOutline.fileId).catch(() => {});
+        }
+        showToast("Course outline uploaded");
+      } catch (e) {
+        showToast("Couldn't upload — check your Drive connection");
+      }
+    },
+    [currentCourse, updateCourse, ensureCourseFolders, showToast]
+  );
+
+  const deleteCourseOutline = useCallback(() => {
+    if (!currentCourse || !currentCourse.outlinePdf) return;
+    const old = currentCourse.outlinePdf;
+    updateCourse({ ...currentCourse, outlinePdf: null });
+    driveDeleteFile(old.fileId).catch(() => {});
+  }, [currentCourse, updateCourse]);
+
   const createCourse = (name) => {
     const course = makeCourse(name);
     setData((d) => ({ ...d, courses: [...d.courses, course] }));
@@ -3669,6 +4235,12 @@ export default function BeatTheCurve() {
                     updateCourse={updateCourse}
                     showToast={showToast}
                     flashId={flashId}
+                    driveStatus={driveStatus}
+                    onUploadReading={uploadReadingPdf}
+                    onDeleteReading={deleteReadingPdf}
+                    onUploadCourseOutline={uploadCourseOutline}
+                    onDeleteCourseOutline={deleteCourseOutline}
+                    onConnectDrive={() => requestDriveToken()}
                   />
                 ) : nav.synthTab === "outline" ? (
                   <OutlineView
@@ -4110,6 +4682,89 @@ function BaseStyles() {
         background: var(--accent); color: #FBF2EF; border-color: var(--accent);
       }
       .btc-btn-danger:hover { background: #712523; }
+
+      /* ---------- PDF modal (Course Outline) ---------- */
+      .btc-pdf-modal-scrim { z-index: 70; }
+      .btc-pdf-modal {
+        background: var(--paper-raised); border: 1px solid var(--rule-strong);
+        border-radius: 4px; width: 100%; max-width: 900px; height: 88vh;
+        display: flex; flex-direction: column; box-shadow: 0 24px 56px rgba(0,0,0,0.28);
+        padding: 18px 20px 20px;
+      }
+      .btc-pdf-modal-head {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 12px; margin-bottom: 14px; flex-shrink: 0;
+      }
+      .btc-pdf-modal-actions { display: flex; align-items: center; gap: 8px; }
+      .btc-pdf-modal-body { flex: 1; min-height: 0; display: flex; }
+      .btc-pdf-upload-prompt {
+        margin: auto; text-align: center; color: var(--ink-soft);
+        display: flex; flex-direction: column; align-items: center; gap: 10px;
+      }
+      .btc-drive-required {
+        margin: auto; text-align: center; color: var(--ink-soft); max-width: 320px;
+        display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 30px 0;
+      }
+
+      /* ---------- PDF viewer ---------- */
+      .btc-pdf-viewer {
+        display: flex; gap: 12px; flex: 1; min-height: 0; width: 100%;
+      }
+      .btc-pdf-thumbs {
+        width: 96px; flex-shrink: 0; overflow-y: auto;
+        display: flex; flex-direction: column; gap: 8px; padding: 2px;
+      }
+      .btc-pdf-thumbs-loading { display: flex; justify-content: center; padding: 20px 0; color: var(--muted); }
+      .btc-pdf-thumb {
+        background: none; border: 1px solid var(--rule-strong); border-radius: 2px;
+        padding: 4px; display: flex; flex-direction: column; align-items: center; gap: 3px;
+      }
+      .btc-pdf-thumb canvas { width: 100%; height: auto; display: block; box-shadow: 0 1px 3px rgba(0,0,0,0.15); }
+      .btc-pdf-thumb span { font-family: 'Inter', sans-serif; font-size: 0.68rem; color: var(--muted); }
+      .btc-pdf-thumb.active { border-color: var(--spine); background: var(--spine-soft); }
+      .btc-pdf-thumb.active span { color: var(--spine); font-weight: 600; }
+      .btc-pdf-main {
+        flex: 1; min-width: 0; display: flex; flex-direction: column;
+        border: 1px solid var(--rule); border-radius: 3px; overflow: hidden;
+      }
+      .btc-pdf-toolbar {
+        display: flex; align-items: center; gap: 4px; padding: 6px 10px;
+        border-bottom: 1px solid var(--rule); background: var(--rule); flex-shrink: 0;
+      }
+      .btc-pdf-page-indicator {
+        font-family: 'Inter', sans-serif; font-size: 0.78rem; color: var(--ink-soft);
+        margin: 0 6px; white-space: nowrap;
+      }
+      .btc-pdf-canvas-wrap {
+        flex: 1; overflow: auto; display: flex; justify-content: center;
+        align-items: flex-start; padding: 16px; background: var(--paper);
+      }
+      .btc-pdf-canvas-wrap canvas { box-shadow: 0 2px 10px rgba(0,0,0,0.18); max-width: 100%; }
+      .btc-pdf-error {
+        margin: auto; text-align: center; color: var(--ink-soft);
+        display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 30px;
+      }
+
+      /* ---------- Readings tab ---------- */
+      .btc-readings-panel { display: flex; flex-direction: column; gap: 16px; }
+      .btc-readings-list { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+      .btc-reading-chip {
+        display: flex; align-items: center; gap: 4px;
+        border: 1px solid var(--rule-strong); border-radius: 14px;
+        padding: 5px 6px 5px 12px; background: var(--paper-raised);
+      }
+      .btc-reading-chip.active { border-color: var(--spine); background: var(--spine-soft); }
+      .btc-reading-chip-name {
+        background: none; border: none; display: flex; align-items: center; gap: 6px;
+        font-family: 'Inter', sans-serif; font-size: 0.82rem; color: var(--ink-soft);
+        max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .btc-reading-chip.active .btc-reading-chip-name { color: var(--spine); font-weight: 600; }
+      .btc-readings-panel .btc-pdf-viewer { height: 640px; }
+
+      /* ---------- Course outline button in week heading ---------- */
+      .btc-week-title-row-outer { display: flex; align-items: center; gap: 12px; }
+      .btc-course-outline-btn { flex-shrink: 0; }
 
       /* ---------- Download menu ---------- */
       .btc-download-wrap { position: relative; display: inline-block; }
