@@ -3658,8 +3658,6 @@ function BackupMenu({
   driveStatus,
   driveFileId,
   driveRootFolderId,
-  onConnectDrive,
-  onDisconnectDrive,
   onRestoreFromDrive,
   onSyncNow,
 }) {
@@ -3698,19 +3696,9 @@ function BackupMenu({
           >
             <Upload size={14} /> Import notes (.json)
           </button>
-          <div className="btc-download-divider" />
-          {!driveConnected ? (
-            <button
-              className="btc-download-option"
-              onClick={() => {
-                setOpen(false);
-                onConnectDrive();
-              }}
-            >
-              <Cloud size={14} /> Sign in with Google
-            </button>
-          ) : (
+          {driveConnected && (
             <>
+              <div className="btc-download-divider" />
               {driveRootFolderId && (
                 <button
                   className="btc-download-option"
@@ -3740,15 +3728,6 @@ function BackupMenu({
                 }}
               >
                 <Cloud size={14} /> Restore from Drive
-              </button>
-              <button
-                className="btc-download-option"
-                onClick={() => {
-                  setOpen(false);
-                  onDisconnectDrive();
-                }}
-              >
-                <CloudOff size={14} /> Sign out
               </button>
             </>
           )}
@@ -4036,9 +4015,18 @@ export default function BeatTheCurve() {
   }, [showToast]);
 
   const signOutGoogle = useCallback(async () => {
+    // Clear session synchronously first so the push-to-Supabase effect below
+    // can't fire with the now-empty `data` before the account is fully signed
+    // out — that race would otherwise overwrite the cloud copy with nothing.
+    setSession(null);
     await signOutOfGoogle();
     setDriveAccessToken(null);
     setDriveStatus("disconnected");
+    setData(DEFAULT_DATA);
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch (e) {}
+    setNav({ courseId: null, view: "week", weekNum: 1, weekTab: "reading", synthTab: "outline" });
     showToast("Signed out");
   }, [showToast]);
 
@@ -4055,11 +4043,15 @@ export default function BeatTheCurve() {
           .select("data")
           .eq("user_id", session.user.id)
           .maybeSingle();
-        if (!cancelled && !error && row?.data) {
+        if (cancelled) return;
+        if (error) {
+          console.error("Supabase fetch error:", error.message);
+          showToast("Couldn't load your synced notes — check the console for details");
+        } else if (row?.data) {
           setData(hydrateData(row.data));
         }
       } catch (e) {
-        // fall through to local/Drive data rather than blocking the app
+        console.error("Supabase fetch error:", e);
       }
       channel = supabase
         .channel(`notes-${session.user.id}`)
@@ -4082,6 +4074,7 @@ export default function BeatTheCurve() {
       cancelled = true;
       if (channel) supabase.removeChannel(channel);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.user?.id]);
 
   /* ---- Supabase real-time sync: push local changes up (debounced), after
@@ -4091,13 +4084,19 @@ export default function BeatTheCurve() {
     const t = setTimeout(() => {
       supabase
         .from("notes")
-        .upsert({ user_id: session.user.id, data, updated_at: new Date().toISOString() })
+        .upsert(
+          { user_id: session.user.id, data, updated_at: new Date().toISOString() },
+          { onConflict: "user_id" }
+        )
         .then(({ error }) => {
-          if (error) console.error("Supabase sync error:", error.message);
+          if (error) {
+            console.error("Supabase sync error:", error.message);
+            showToast("Couldn't sync to your account — check the console for details");
+          }
         });
     }, 800);
     return () => clearTimeout(t);
-  }, [data, loaded, session?.user?.id]);
+  }, [data, loaded, session?.user?.id, showToast]);
 
   /* ---- Google Drive: sync current data into the Drive folder structure ---- */
   const syncToDrive = useCallback(async () => {
@@ -4459,6 +4458,15 @@ export default function BeatTheCurve() {
               {session.user.email}
             </span>
           )}
+          {session?.user ? (
+            <button className="btc-btn btc-btn-outline small" onClick={signOutGoogle}>
+              <CloudOff size={14} /> Sign out
+            </button>
+          ) : (
+            <button className="btc-btn btc-btn-primary small" onClick={signInWithGoogle}>
+              <Cloud size={14} /> Sign in with Google
+            </button>
+          )}
           <button
             className="btc-btn btc-btn-outline small"
             onClick={() => setDarkMode((v) => !v)}
@@ -4472,8 +4480,6 @@ export default function BeatTheCurve() {
             driveStatus={driveStatus}
             driveFileId={driveFileId}
             driveRootFolderId={driveRootFolderId}
-            onConnectDrive={signInWithGoogle}
-            onDisconnectDrive={signOutGoogle}
             onRestoreFromDrive={restoreFromDrive}
             onSyncNow={syncNow}
           />
