@@ -1531,6 +1531,27 @@ function SplitViewIcon({ size = 13 }) {
   );
 }
 
+function IndentIcon({ size = 13, dir = "in" }) {
+  const arrow = dir === "in" ? <polyline points="3 8 7 12 3 16" /> : <polyline points="7 8 3 12 7 16" />;
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <line x1="11" y1="5" x2="21" y2="5" />
+      <line x1="11" y1="12" x2="21" y2="12" />
+      <line x1="11" y1="19" x2="21" y2="19" />
+      {arrow}
+    </svg>
+  );
+}
+
 function FullscreenIcon({ active, size = 14 }) {
   return active ? (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1779,6 +1800,25 @@ function RichTextField({ value, onChange, placeholder, minHeight = 90 }) {
           onClick={() => exec("insertOrderedList")}
         >
           <ListOrdered size={13} />
+        </button>
+        <span className="btc-rte-sep" />
+        <button
+          type="button"
+          className="btc-rte-btn"
+          title="Decrease indent"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => exec("outdent")}
+        >
+          <IndentIcon size={13} dir="out" />
+        </button>
+        <button
+          type="button"
+          className="btc-rte-btn"
+          title="Increase indent"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => exec("indent")}
+        >
+          <IndentIcon size={13} dir="in" />
         </button>
         <span className="btc-rte-sep" />
         <button
