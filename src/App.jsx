@@ -4664,6 +4664,7 @@ export default function BeatTheCurve() {
               currentId={currentCourse.id}
               onSelect={selectCourse}
               onCreate={createCourse}
+              onRename={renameCourse}
               onDelete={requestDeleteCourse}
             />
             <div className="btc-course-doc-group">
