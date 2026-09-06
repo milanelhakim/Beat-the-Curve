@@ -37,6 +37,7 @@ import {
   Highlighter,
   Sun,
   Moon,
+  Link,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
@@ -765,9 +766,14 @@ function courseToBlocks(course) {
     { type: "p", text: "Beat the Curve — full course export" },
     { type: "space" },
   ];
-  course.weeks.forEach((w) => blocks.push(...weekToBlocks(w)));
+  const weeksWithContent = course.weeks.filter(weekHasContent);
+  weeksWithContent.forEach((w, i) => {
+    if (i > 0) blocks.push({ type: "pagebreak" });
+    blocks.push(...weekToBlocks(w));
+  });
+  if (weeksWithContent.length) blocks.push({ type: "pagebreak" });
   blocks.push(...outlineToBlocks(course));
-  blocks.push({ type: "space" });
+  blocks.push({ type: "pagebreak" });
   blocks.push(...prewritesToBlocks(course));
   return blocks;
 }
@@ -793,6 +799,8 @@ function blocksToHtml(blocks) {
     closeList();
     if (b.type === "space") {
       html += `<div style="height:10pt"></div>`;
+    } else if (b.type === "pagebreak") {
+      html += `<div style="page-break-before:always"></div>`;
     } else {
       html += `<${b.type}>${escapeHtml(b.text)}</${b.type}>`;
     }
@@ -810,11 +818,15 @@ function loadDocxLib() {
 }
 
 function blocksToDocxParagraphs(docxLib, blocks) {
-  const { Paragraph, TextRun, HeadingLevel } = docxLib;
+  const { Paragraph, TextRun, HeadingLevel, PageBreak } = docxLib;
   const paragraphs = [];
   blocks.forEach((b) => {
     if (b.type === "space") {
       paragraphs.push(new Paragraph({ text: "" }));
+      return;
+    }
+    if (b.type === "pagebreak") {
+      paragraphs.push(new Paragraph({ children: [new PageBreak()] }));
       return;
     }
     const cleanText = (b.text || "").replace(/\*\*/g, "").replace(/`/g, "");
@@ -1160,6 +1172,11 @@ async function blocksToPdfAndSave(blocks, filename) {
       y += 10;
       return;
     }
+    if (b.type === "pagebreak") {
+      doc.addPage();
+      y = 64;
+      return;
+    }
     let fontSize = 11;
     let fontStyle = "normal";
     let lineGap = 15;
@@ -1286,15 +1303,78 @@ const RTE_FONT_SIZES = [
   { value: "7", label: "X-Large" },
 ];
 
+const RTE_ALLOWED_TAGS = new Set(["A", "B", "STRONG", "I", "EM", "U", "UL", "OL", "LI", "BR", "P", "DIV", "SPAN", "FONT"]);
+const RTE_ALLOWED_STYLE_PROPS = new Set(["color", "background-color", "font-size"]);
+
+// Cleans pasted HTML down to the formatting we actually support (bold, italic,
+// underline, lists, color/highlight, links) so pasting from Word or a webpage
+// doesn't drag in fonts, margins, or classes — while keeping the link itself.
+function sanitizePastedHtml(html) {
+  const container = document.createElement("div");
+  container.innerHTML = html;
+
+  const clean = (node) => {
+    [...node.childNodes].forEach((child) => {
+      if (child.nodeType === 3) return;
+      if (child.nodeType !== 1) {
+        node.removeChild(child);
+        return;
+      }
+      if (!RTE_ALLOWED_TAGS.has(child.tagName)) {
+        while (child.firstChild) node.insertBefore(child.firstChild, child);
+        node.removeChild(child);
+        return;
+      }
+      const isAnchor = child.tagName === "A";
+      const keepStyle = child.tagName === "SPAN" || child.tagName === "FONT";
+      [...child.attributes].forEach((attr) => {
+        if (isAnchor && attr.name === "href") return;
+        if (keepStyle && attr.name === "style") {
+          const kept = attr.value
+            .split(";")
+            .map((decl) => decl.split(":").map((s) => s && s.trim()))
+            .filter(([prop, val]) => prop && val && RTE_ALLOWED_STYLE_PROPS.has(prop.toLowerCase()))
+            .map(([prop, val]) => `${prop}:${val}`)
+            .join(";");
+          if (kept) child.setAttribute("style", kept);
+          else child.removeAttribute("style");
+          return;
+        }
+        child.removeAttribute(attr.name);
+      });
+      if (isAnchor) {
+        child.setAttribute("target", "_blank");
+        child.setAttribute("rel", "noopener noreferrer");
+      }
+      clean(child);
+    });
+  };
+  clean(container);
+  return container.innerHTML;
+}
+
 function RichTextField({ value, onChange, placeholder, minHeight = 90 }) {
   const ref = useRef(null);
+  const wrapRef = useRef(null);
   const isFocusedRef = useRef(false);
+  const savedRangeRef = useRef(null);
+  const [linkMenu, setLinkMenu] = useState(null); // null | { mode: "add" | "edit" }
+  const [linkInput, setLinkInput] = useState("");
 
   useEffect(() => {
     if (ref.current && !isFocusedRef.current && ref.current.innerHTML !== (value || "")) {
       ref.current.innerHTML = value || "";
     }
   }, [value]);
+
+  useEffect(() => {
+    if (!linkMenu) return;
+    const onClick = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setLinkMenu(null);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [linkMenu]);
 
   const emitChange = () => {
     if (ref.current) onChange(ref.current.innerHTML);
@@ -1306,8 +1386,108 @@ function RichTextField({ value, onChange, placeholder, minHeight = 90 }) {
     emitChange();
   };
 
+  const saveSelection = () => {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0 && ref.current && ref.current.contains(sel.anchorNode)) {
+      savedRangeRef.current = sel.getRangeAt(0).cloneRange();
+    }
+  };
+
+  const selectNode = (node) => {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    savedRangeRef.current = range.cloneRange();
+  };
+
+  const restoreSelection = () => {
+    const sel = window.getSelection();
+    if (sel && savedRangeRef.current) {
+      sel.removeAllRanges();
+      sel.addRange(savedRangeRef.current);
+    }
+  };
+
+  const openAddLink = () => {
+    const sel = window.getSelection();
+    if (!sel || !sel.toString().trim() || !(ref.current && ref.current.contains(sel.anchorNode))) {
+      return; // nothing selected to attach a link to
+    }
+    saveSelection();
+    setLinkInput("");
+    setLinkMenu({ mode: "add" });
+  };
+
+  const handleContextMenu = (e) => {
+    const anchor = e.target.closest && e.target.closest("a");
+    if (anchor && ref.current && ref.current.contains(anchor)) {
+      e.preventDefault();
+      selectNode(anchor);
+      setLinkInput(anchor.getAttribute("href") || "");
+      setLinkMenu({ mode: "edit" });
+      return;
+    }
+    const sel = window.getSelection();
+    if (sel && sel.toString().trim() && ref.current && ref.current.contains(sel.anchorNode)) {
+      e.preventDefault();
+      saveSelection();
+      setLinkInput("");
+      setLinkMenu({ mode: "add" });
+    }
+    // otherwise let the browser's normal context menu (spellcheck, etc.) show
+  };
+
+  const normalizeUrl = (url) => {
+    const trimmed = url.trim();
+    if (!trimmed) return "";
+    if (/^(https?:|mailto:|tel:)/i.test(trimmed)) return trimmed;
+    return `https://${trimmed}`;
+  };
+
+  const applyLink = () => {
+    restoreSelection();
+    if (ref.current) ref.current.focus();
+    if (linkMenu && linkMenu.mode === "edit") document.execCommand("unlink");
+    const url = normalizeUrl(linkInput);
+    if (url) {
+      document.execCommand("createLink", false, url);
+      if (ref.current) {
+        ref.current.querySelectorAll("a").forEach((a) => {
+          if (!a.getAttribute("target")) {
+            a.setAttribute("target", "_blank");
+            a.setAttribute("rel", "noopener noreferrer");
+          }
+        });
+      }
+    }
+    setLinkMenu(null);
+    emitChange();
+  };
+
+  const removeLink = () => {
+    restoreSelection();
+    if (ref.current) ref.current.focus();
+    document.execCommand("unlink");
+    setLinkMenu(null);
+    emitChange();
+  };
+
+  const handlePaste = (e) => {
+    e.preventDefault();
+    const html = e.clipboardData.getData("text/html");
+    const text = e.clipboardData.getData("text/plain");
+    if (html) {
+      document.execCommand("insertHTML", false, sanitizePastedHtml(html));
+    } else if (text) {
+      document.execCommand("insertText", false, text);
+    }
+    emitChange();
+  };
+
   return (
-    <div className="btc-rte">
+    <div className="btc-rte" ref={wrapRef}>
       <div className="btc-rte-toolbar">
         <button type="button" className="btc-rte-btn" title="Bold" onMouseDown={(e) => e.preventDefault()} onClick={() => exec("bold")}>
           <Bold size={13} />
@@ -1344,6 +1524,15 @@ function RichTextField({ value, onChange, placeholder, minHeight = 90 }) {
           <ListOrdered size={13} />
         </button>
         <span className="btc-rte-sep" />
+        <button
+          type="button"
+          className="btc-rte-btn"
+          title="Add link (select text first, or right-click a link to edit it)"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={openAddLink}
+        >
+          <Link size={13} />
+        </button>
         <select
           className="btc-rte-select"
           defaultValue=""
@@ -1386,7 +1575,32 @@ function RichTextField({ value, onChange, placeholder, minHeight = 90 }) {
           isFocusedRef.current = false;
         }}
         onInput={emitChange}
+        onPaste={handlePaste}
+        onContextMenu={handleContextMenu}
       />
+      {linkMenu && (
+        <div className="btc-rte-link-popover">
+          <input
+            className="btc-rte-link-input"
+            autoFocus
+            placeholder="https://example.com"
+            value={linkInput}
+            onChange={(e) => setLinkInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") applyLink();
+              if (e.key === "Escape") setLinkMenu(null);
+            }}
+          />
+          <button className="btc-btn btc-btn-primary small" onClick={applyLink}>
+            {linkMenu.mode === "edit" ? "Update" : "Add"}
+          </button>
+          {linkMenu.mode === "edit" && (
+            <button className="btc-btn btc-btn-outline small" onClick={removeLink}>
+              Remove
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -3436,8 +3650,8 @@ function BaseStyles() {
       .btc-root.btc-dark {
         --paper: #1C1D1F;
         --paper-raised: #24262A;
-        --ink: #EDE7D9;
-        --ink-soft: #C7BFA9;
+        --ink: #F6F4EF;
+        --ink-soft: #D9D5C9;
         --muted: #8B8676;
         --rule: #37393D;
         --rule-strong: #46484D;
@@ -3943,8 +4157,9 @@ function BaseStyles() {
 
       /* ---------- Rich text editor ---------- */
       .btc-rte {
+        position: relative;
         border: 1px solid var(--rule-strong); border-radius: 2px;
-        background: var(--paper-raised); overflow: hidden;
+        background: var(--paper-raised);
       }
       .btc-rte-toolbar {
         display: flex; flex-wrap: nowrap; align-items: center; gap: 2px;
@@ -3988,6 +4203,19 @@ function BaseStyles() {
       }
       .btc-rte-content ul, .btc-rte-content ol { margin: 0 0 6px 20px; padding: 0; }
       .btc-rte-content p, .btc-rte-content div { margin: 0 0 4px; }
+      .btc-rte-content a { color: var(--spine); text-decoration: underline; text-underline-offset: 2px; }
+
+      .btc-rte-link-popover {
+        position: absolute; top: calc(100% + 6px); left: 6px; z-index: 30;
+        display: flex; align-items: center; gap: 6px;
+        background: var(--paper-raised); border: 1px solid var(--rule-strong);
+        border-radius: 3px; padding: 8px; box-shadow: 0 10px 28px rgba(33,29,23,0.14);
+      }
+      .btc-rte-link-input {
+        border: 1px solid var(--rule-strong); border-radius: 2px; background: var(--paper);
+        padding: 6px 8px; font-size: 0.85rem; color: var(--ink); width: 220px;
+        font-family: 'Inter', sans-serif;
+      }
 
       /* ---------- Dissenting opinion ---------- */
       .btc-dissent-toggle {
