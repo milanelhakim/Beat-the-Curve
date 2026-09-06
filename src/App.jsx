@@ -476,21 +476,21 @@ function htmlToBlocks(html) {
 function noteHasContent(note) {
   if (!note) return false;
   if (note.type === "concept") {
-    const own = (note.title && note.title.trim()) || !htmlIsBlank(note.summary);
+    const own = !htmlIsBlank(note.title) || !htmlIsBlank(note.summary);
     const cases = (note.cases || []).some((c) =>
       [c.caseName, c.citation, c.note].some((v) => v && v.trim())
     );
     return own || cases;
   }
   if (note.type === "evolution") {
-    const own = (note.title && note.title.trim()) || !htmlIsBlank(note.currentRule);
+    const own = !htmlIsBlank(note.title) || !htmlIsBlank(note.currentRule);
     const tl = (note.timeline || []).some((t) =>
       [t.caseName, t.citation, t.year, t.development].some((v) => v && v.trim())
     );
     return own || tl;
   }
   // brief (default/legacy)
-  const core = [note.caseName, note.citation].some((v) => v && v.trim());
+  const core = !htmlIsBlank(note.caseName) || !htmlIsBlank(note.citation);
   const rich = [note.facts, note.procHistory, note.issue, note.holding, note.reasoning].some(
     (v) => !htmlIsBlank(v)
   );
@@ -511,7 +511,8 @@ function weekHasContent(week) {
 function compileNoteContent(note) {
   if (!noteHasContent(note)) return "";
   if (note.type === "concept") {
-    const lines = [`### Concept: ${note.title || "Untitled concept"}`];
+    const titleText = htmlIsBlank(note.title) ? "Untitled concept" : htmlToPlainText(note.title);
+    const lines = [`### Concept: ${titleText}`];
     if (!htmlIsBlank(note.summary)) lines.push(htmlToPlainText(note.summary));
     const cases = (note.cases || []).filter((c) => c.caseName || c.note);
     if (cases.length) {
@@ -525,7 +526,8 @@ function compileNoteContent(note) {
     return lines.join("\n");
   }
   if (note.type === "evolution") {
-    const lines = [`### Evolution of law: ${note.title || "Untitled doctrine"}`];
+    const titleText = htmlIsBlank(note.title) ? "Untitled doctrine" : htmlToPlainText(note.title);
+    const lines = [`### Evolution of law: ${titleText}`];
     if (!htmlIsBlank(note.currentRule)) {
       lines.push(`**Current rule:** ${htmlToPlainText(note.currentRule)}`);
     }
@@ -542,8 +544,9 @@ function compileNoteContent(note) {
     return lines.join("\n");
   }
   // brief
-  const name = note.caseName || "Untitled case";
-  const cite = note.citation ? ` (${note.citation})` : "";
+  const name = htmlIsBlank(note.caseName) ? "Untitled case" : htmlToPlainText(note.caseName);
+  const citeText = htmlIsBlank(note.citation) ? "" : htmlToPlainText(note.citation);
+  const cite = citeText ? ` (${citeText})` : "";
   const holdingText = htmlIsBlank(note.holding) ? "[holding not yet noted]" : htmlToPlainText(note.holding);
   const lines = [`- **${name}${cite}** — ${holdingText}`];
   if (!htmlIsBlank(note.reasoning)) lines.push(`  ${htmlToPlainText(note.reasoning)}`);
@@ -603,15 +606,15 @@ function buildAuthoritiesList(note) {
       .map((t) => `- ${t.caseName}${t.citation ? ` (${t.citation})` : ""}${t.year ? ` — ${t.year}` : ""}`)
       .join("\n");
   }
-  if (!note.caseName && !note.citation) return "";
-  return `- ${note.caseName || "Untitled case"}${note.citation ? ` (${note.citation})` : ""}`;
+  if (htmlIsBlank(note.caseName) && htmlIsBlank(note.citation)) return "";
+  const nameText = htmlIsBlank(note.caseName) ? "Untitled case" : htmlToPlainText(note.caseName);
+  const citeText = htmlIsBlank(note.citation) ? "" : htmlToPlainText(note.citation);
+  return `- ${nameText}${citeText ? ` (${citeText})` : ""}`;
 }
 
 function buildPrewriteFromNote(note) {
-  const title =
-    note.type === "brief"
-      ? note.caseName || "Untitled attack outline"
-      : note.title || "Untitled attack outline";
+  const rawTitle = note.type === "brief" ? note.caseName : note.title;
+  const title = htmlIsBlank(rawTitle) ? "Untitled attack outline" : htmlToPlainText(rawTitle);
   const rawSeed = note.type === "brief" ? note.holding : note.type === "concept" ? note.summary : note.currentRule;
   const ruleSeed = htmlIsBlank(rawSeed) ? "" : htmlToPlainText(rawSeed);
   const authorities = buildAuthoritiesList(note);
@@ -723,7 +726,8 @@ function mdToBlocks(raw) {
 function noteToBlocks(note, idx) {
   const blocks = [];
   if (note.type === "concept") {
-    blocks.push({ type: "h4", text: `${idx}. Concept: ${note.title || "Untitled concept"}` });
+    const titleText = htmlIsBlank(note.title) ? "Untitled concept" : htmlToPlainText(note.title);
+    blocks.push({ type: "h4", text: `${idx}. Concept: ${titleText}` });
     if (!htmlIsBlank(note.summary)) blocks.push({ type: "p", text: htmlToPlainText(note.summary) });
     const cases = (note.cases || []).filter((c) => c.caseName || c.note);
     if (cases.length) {
@@ -738,7 +742,8 @@ function noteToBlocks(note, idx) {
       );
     }
   } else if (note.type === "evolution") {
-    blocks.push({ type: "h4", text: `${idx}. Evolution of law: ${note.title || "Untitled doctrine"}` });
+    const titleText = htmlIsBlank(note.title) ? "Untitled doctrine" : htmlToPlainText(note.title);
+    blocks.push({ type: "h4", text: `${idx}. Evolution of law: ${titleText}` });
     if (!htmlIsBlank(note.currentRule)) {
       blocks.push({ type: "p", text: `Current governing rule: ${htmlToPlainText(note.currentRule)}` });
     }
@@ -755,8 +760,9 @@ function noteToBlocks(note, idx) {
       );
     }
   } else {
-    const name = note.caseName || "Untitled case";
-    const cite = note.citation ? ` — ${note.citation}` : "";
+    const name = htmlIsBlank(note.caseName) ? "Untitled case" : htmlToPlainText(note.caseName);
+    const citeText = htmlIsBlank(note.citation) ? "" : htmlToPlainText(note.citation);
+    const cite = citeText ? ` — ${citeText}` : "";
     blocks.push({ type: "h4", text: `${idx}. ${name}${cite}` });
     if (!htmlIsBlank(note.facts)) blocks.push({ type: "p", text: `Facts: ${htmlToPlainText(note.facts)}` });
     if (!htmlIsBlank(note.procHistory))
@@ -1554,6 +1560,19 @@ function IndentIcon({ size = 13, dir = "in" }) {
   );
 }
 
+function DragHandleIcon({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <circle cx="9" cy="6" r="1.6" />
+      <circle cx="15" cy="6" r="1.6" />
+      <circle cx="9" cy="12" r="1.6" />
+      <circle cx="15" cy="12" r="1.6" />
+      <circle cx="9" cy="18" r="1.6" />
+      <circle cx="15" cy="18" r="1.6" />
+    </svg>
+  );
+}
+
 function FullscreenIcon({ active, size = 14 }) {
   return active ? (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1633,7 +1652,7 @@ function sanitizePastedHtml(html) {
   return container.innerHTML;
 }
 
-function RichTextField({ value, onChange, placeholder, minHeight = 90 }) {
+function RichTextField({ value, onChange, placeholder, minHeight = 90, inline = false }) {
   const ref = useRef(null);
   const wrapRef = useRef(null);
   const isFocusedRef = useRef(false);
@@ -1841,8 +1860,9 @@ function RichTextField({ value, onChange, placeholder, minHeight = 90 }) {
   };
 
   return (
-    <div className="btc-rte" ref={wrapRef}>
-      <div className="btc-rte-toolbar">
+    <div className={`btc-rte${inline ? " btc-rte-inline" : ""}`} ref={wrapRef}>
+      {!inline && (
+        <div className="btc-rte-toolbar">
         <button type="button" className="btc-rte-btn" title="Bold" onMouseDown={(e) => e.preventDefault()} onClick={() => exec("bold")}>
           <Bold size={13} />
         </button>
@@ -1933,11 +1953,12 @@ function RichTextField({ value, onChange, placeholder, minHeight = 90 }) {
           <Highlighter size={13} />
           <input type="color" onMouseDown={(e) => e.stopPropagation()} onChange={(e) => exec("hiliteColor", e.target.value)} />
         </label>
-      </div>
+        </div>
+      )}
       <div
         ref={ref}
-        className="btc-rte-content"
-        style={{ minHeight }}
+        className={`btc-rte-content${inline ? " btc-rte-content-inline" : ""}`}
+        style={{ minHeight: inline ? undefined : minHeight }}
         contentEditable
         suppressContentEditableWarning
         data-placeholder={placeholder}
@@ -2095,34 +2116,42 @@ function PdfViewer({ blob, fileId, onMissing }) {
 
 
 
-function CaseBriefCard({ index, data, onChange, onDelete, onOutline, onPrewrite, flashId }) {
+function CaseBriefCard({ index, data, onChange, onDelete, onOutline, onPrewrite, flashId, onDragStart, onDragEnd }) {
   const isFlash = flashId === data.id;
+  const [collapsed, setCollapsed] = useState(false);
   return (
     <div
       id={`note-${data.id}`}
       className={`btc-case-card${isFlash ? " btc-flash" : ""}`}
     >
       <div className="btc-case-header">
+        <span className="btc-drag-handle" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} title="Drag to reorder">
+          <DragHandleIcon size={14} />
+        </span>
+        <button className="btc-fold-btn" onClick={() => setCollapsed((v) => !v)} title={collapsed ? "Expand" : "Collapse"}>
+          {collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+        </button>
         <span className="btc-case-index">{String(index + 1).padStart(2, "0")}</span>
         <div className="btc-case-title-wrap">
           <span className="btc-note-badge brief">Case brief</span>
-          <input
-            className="btc-case-name-input"
+          <RichTextField
+            inline
             placeholder="Case name (e.g., Palsgraf v. Long Island R.R. Co.)"
             value={data.caseName}
-            onChange={(e) => onChange({ ...data, caseName: e.target.value })}
+            onChange={(html) => onChange({ ...data, caseName: html })}
           />
-          <input
-            className="btc-case-citation-input"
+          <RichTextField
+            inline
             placeholder="Citation (optional)"
             value={data.citation}
-            onChange={(e) => onChange({ ...data, citation: e.target.value })}
+            onChange={(html) => onChange({ ...data, citation: html })}
           />
         </div>
         <NoteActions onOutline={onOutline} onPrewrite={onPrewrite} onDelete={onDelete} />
       </div>
 
-      <div className="btc-case-body">
+      {!collapsed && (
+        <div className="btc-case-body">
         <Field label="Facts">
           <RichTextField
             minHeight={64}
@@ -2193,13 +2222,15 @@ function CaseBriefCard({ index, data, onChange, onDelete, onOutline, onPrewrite,
             </Field>
           </div>
         )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function ConceptNoteCard({ index, data, onChange, onDelete, onOutline, onPrewrite, flashId }) {
+function ConceptNoteCard({ index, data, onChange, onDelete, onOutline, onPrewrite, flashId, onDragStart, onDragEnd }) {
   const isFlash = flashId === data.id;
+  const [collapsed, setCollapsed] = useState(false);
   const updateLinked = (lcId, next) =>
     onChange({ ...data, cases: data.cases.map((c) => (c.id === lcId ? next : c)) });
   const addLinked = () => onChange({ ...data, cases: [...data.cases, makeLinkedCase()] });
@@ -2208,20 +2239,27 @@ function ConceptNoteCard({ index, data, onChange, onDelete, onOutline, onPrewrit
   return (
     <div id={`note-${data.id}`} className={`btc-case-card${isFlash ? " btc-flash" : ""}`}>
       <div className="btc-case-header">
+        <span className="btc-drag-handle" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} title="Drag to reorder">
+          <DragHandleIcon size={14} />
+        </span>
+        <button className="btc-fold-btn" onClick={() => setCollapsed((v) => !v)} title={collapsed ? "Expand" : "Collapse"}>
+          {collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+        </button>
         <span className="btc-case-index">{String(index + 1).padStart(2, "0")}</span>
         <div className="btc-case-title-wrap">
           <span className="btc-note-badge concept">Concept note</span>
-          <input
-            className="btc-case-name-input"
+          <RichTextField
+            inline
             placeholder="Doctrine or topic (e.g., Duty of Care)"
             value={data.title}
-            onChange={(e) => onChange({ ...data, title: e.target.value })}
+            onChange={(html) => onChange({ ...data, title: html })}
           />
         </div>
         <NoteActions onOutline={onOutline} onPrewrite={onPrewrite} onDelete={onDelete} />
       </div>
 
-      <div className="btc-case-body">
+      {!collapsed && (
+        <div className="btc-case-body">
         <Field label="Synthesis">
           <RichTextField
             minHeight={90}
@@ -2265,13 +2303,15 @@ function ConceptNoteCard({ index, data, onChange, onDelete, onOutline, onPrewrit
             <Plus size={13} /> Link a case
           </button>
         </div>
-      </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function EvolutionNoteCard({ index, data, onChange, onDelete, onOutline, onPrewrite, flashId }) {
+function EvolutionNoteCard({ index, data, onChange, onDelete, onOutline, onPrewrite, flashId, onDragStart, onDragEnd }) {
   const isFlash = flashId === data.id;
+  const [collapsed, setCollapsed] = useState(false);
   const updateEntry = (teId, next) =>
     onChange({ ...data, timeline: data.timeline.map((t) => (t.id === teId ? next : t)) });
   const addEntry = () => onChange({ ...data, timeline: [...data.timeline, makeTimelineEntry()] });
@@ -2287,20 +2327,27 @@ function EvolutionNoteCard({ index, data, onChange, onDelete, onOutline, onPrewr
   return (
     <div id={`note-${data.id}`} className={`btc-case-card${isFlash ? " btc-flash" : ""}`}>
       <div className="btc-case-header">
+        <span className="btc-drag-handle" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} title="Drag to reorder">
+          <DragHandleIcon size={14} />
+        </span>
+        <button className="btc-fold-btn" onClick={() => setCollapsed((v) => !v)} title={collapsed ? "Expand" : "Collapse"}>
+          {collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+        </button>
         <span className="btc-case-index">{String(index + 1).padStart(2, "0")}</span>
         <div className="btc-case-title-wrap">
           <span className="btc-note-badge evolution">Evolution of law</span>
-          <input
-            className="btc-case-name-input"
+          <RichTextField
+            inline
             placeholder="Doctrine tracked over time (e.g., Personal Jurisdiction)"
             value={data.title}
-            onChange={(e) => onChange({ ...data, title: e.target.value })}
+            onChange={(html) => onChange({ ...data, title: html })}
           />
         </div>
         <NoteActions onOutline={onOutline} onPrewrite={onPrewrite} onDelete={onDelete} />
       </div>
 
-      <div className="btc-case-body">
+      {!collapsed && (
+        <div className="btc-case-body">
         <div className="btc-current-rule-box">
           <div className="btc-field-label">Current governing rule</div>
           <RichTextField
@@ -2369,12 +2416,13 @@ function EvolutionNoteCard({ index, data, onChange, onDelete, onOutline, onPrewr
             <Plus size={13} /> Add to timeline
           </button>
         </div>
-      </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function ReadingNoteCard({ index, note, onChange, onDelete, onOutline, onPrewrite, flashId }) {
+function ReadingNoteCard({ index, note, onChange, onDelete, onOutline, onPrewrite, flashId, onDragStart, onDragEnd }) {
   if (note.type === "concept") {
     return (
       <ConceptNoteCard
@@ -2385,6 +2433,8 @@ function ReadingNoteCard({ index, note, onChange, onDelete, onOutline, onPrewrit
         onOutline={onOutline}
         onPrewrite={onPrewrite}
         flashId={flashId}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
       />
     );
   }
@@ -2398,6 +2448,8 @@ function ReadingNoteCard({ index, note, onChange, onDelete, onOutline, onPrewrit
         onOutline={onOutline}
         onPrewrite={onPrewrite}
         flashId={flashId}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
       />
     );
   }
@@ -2410,6 +2462,8 @@ function ReadingNoteCard({ index, note, onChange, onDelete, onOutline, onPrewrit
       onOutline={onOutline}
       onPrewrite={onPrewrite}
       flashId={flashId}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
     />
   );
 }
@@ -2756,6 +2810,38 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
     });
   };
 
+  // Drag-to-reorder for the reading note cards. Dragging is initiated only
+  // from each card's dedicated handle (not the whole card), so it can't
+  // hijack normal clicks/text-selection happening inside the card.
+  const draggedNoteRef = useRef(null);
+  const [draggedNoteId, setDraggedNoteId] = useState(null);
+
+  const handleNoteDragStart = (id) => (e) => {
+    draggedNoteRef.current = id;
+    setDraggedNoteId(id);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", id); // required for Firefox to start the drag
+  };
+  const handleNoteDragOver = (e) => e.preventDefault();
+  const handleNoteDrop = (targetId) => (e) => {
+    e.preventDefault();
+    const draggedId = draggedNoteRef.current;
+    draggedNoteRef.current = null;
+    setDraggedNoteId(null);
+    if (!draggedId || draggedId === targetId) return;
+    const list = [...week.readingNotes];
+    const fromIdx = list.findIndex((n) => n.id === draggedId);
+    const toIdx = list.findIndex((n) => n.id === targetId);
+    if (fromIdx === -1 || toIdx === -1) return;
+    const [moved] = list.splice(fromIdx, 1);
+    list.splice(toIdx, 0, moved);
+    updateWeek(weekNum, { ...week, readingNotes: list });
+  };
+  const handleNoteDragEnd = () => {
+    draggedNoteRef.current = null;
+    setDraggedNoteId(null);
+  };
+
   const updateLecture = (field, value) => {
     updateWeek(weekNum, { ...week, lecture: { ...week.lecture, [field]: value } });
   };
@@ -2773,8 +2859,8 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
       const merged = { ...existing, content: `${existing.content}${html}` };
       nextOutline = course.outline.map((s) => (s.id === existing.id ? merged : s));
     } else {
-      const title =
-        note.type === "brief" ? note.caseName || "Untitled case" : note.title || "Untitled";
+      const rawTitle = note.type === "brief" ? note.caseName : note.title;
+      const title = htmlIsBlank(rawTitle) ? "Untitled" : htmlToPlainText(rawTitle);
       nextOutline = [...course.outline, makeOutlineSection({ title, content: html, noteTag: note.id })];
     }
     updateCourse({ ...course, outline: nextOutline });
@@ -2985,16 +3071,24 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
             )}
             <div className="btc-case-list">
               {week.readingNotes.map((n, i) => (
-                <ReadingNoteCard
+                <div
                   key={n.id}
-                  index={i}
-                  note={n}
-                  flashId={flashId}
-                  onChange={(next) => updateNote(n.id, next)}
-                  onDelete={() => deleteNote(n.id)}
-                  onOutline={() => addNoteToOutline(n)}
-                  onPrewrite={() => sendNoteToPrewrite(n)}
-                />
+                  className={`btc-note-drag-wrap${draggedNoteId === n.id ? " dragging" : ""}`}
+                  onDragOver={handleNoteDragOver}
+                  onDrop={handleNoteDrop(n.id)}
+                >
+                  <ReadingNoteCard
+                    index={i}
+                    note={n}
+                    flashId={flashId}
+                    onChange={(next) => updateNote(n.id, next)}
+                    onDelete={() => deleteNote(n.id)}
+                    onOutline={() => addNoteToOutline(n)}
+                    onPrewrite={() => sendNoteToPrewrite(n)}
+                    onDragStart={handleNoteDragStart(n.id)}
+                    onDragEnd={handleNoteDragEnd}
+                  />
+                </div>
               ))}
             </div>
             <AddNoteMenu onAdd={addNote} />
@@ -3349,23 +3443,27 @@ function buildSearchIndex(courses) {
         let text = "";
         if (note.type === "concept") {
           typeLabel = "Concept note";
+          const titleText = stripHtml(note.title);
           const summaryText = stripHtml(note.summary);
           const casesText = (note.cases || [])
             .map((c) => `${c.caseName} ${c.citation} ${c.note}`)
             .join(" ");
-          text = [note.title, summaryText, casesText].filter(Boolean).join(" ");
-          title = note.title || "Untitled concept";
+          text = [titleText, summaryText, casesText].filter(Boolean).join(" ");
+          title = titleText || "Untitled concept";
           snippet = summaryText;
         } else if (note.type === "evolution") {
           typeLabel = "Evolution of law";
+          const titleText = stripHtml(note.title);
           const ruleText = stripHtml(note.currentRule);
           const tlText = (note.timeline || [])
             .map((t) => `${t.caseName} ${t.citation} ${t.year} ${t.development}`)
             .join(" ");
-          text = [note.title, ruleText, tlText].filter(Boolean).join(" ");
-          title = note.title || "Untitled doctrine";
+          text = [titleText, ruleText, tlText].filter(Boolean).join(" ");
+          title = titleText || "Untitled doctrine";
           snippet = ruleText;
         } else {
+          const caseNameText = stripHtml(note.caseName);
+          const citationText = stripHtml(note.citation);
           const factsText = stripHtml(note.facts);
           const holdingText = stripHtml(note.holding);
           const issueText = stripHtml(note.issue);
@@ -3373,8 +3471,8 @@ function buildSearchIndex(courses) {
             ? `${stripHtml(note.dissentSummary)} ${stripHtml(note.dissentSignificance)}`
             : "";
           text = [
-            note.caseName,
-            note.citation,
+            caseNameText,
+            citationText,
             factsText,
             stripHtml(note.procHistory),
             issueText,
@@ -3384,7 +3482,7 @@ function buildSearchIndex(courses) {
           ]
             .filter(Boolean)
             .join(" ");
-          title = note.caseName || "Untitled case";
+          title = caseNameText || "Untitled case";
           snippet = holdingText || factsText || issueText;
         }
         if (text.trim()) {
@@ -5396,24 +5494,37 @@ function BaseStyles() {
         padding: 16px 18px 18px;
         transition: box-shadow 0.4s ease;
       }
-      .btc-case-header { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+      .btc-case-header { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
+      .btc-drag-handle {
+        color: var(--muted); cursor: grab; padding-top: 7px; flex-shrink: 0;
+        -webkit-user-drag: element; user-select: none;
+      }
+      .btc-drag-handle:active { cursor: grabbing; }
+      .btc-drag-handle:hover { color: var(--ink); }
+      .btc-fold-btn {
+        background: none; border: none; color: var(--muted); padding: 4px 0 0;
+        flex-shrink: 0; margin-right: 2px;
+      }
+      .btc-fold-btn:hover { color: var(--ink); }
+      .btc-note-drag-wrap.dragging { opacity: 0.4; }
       .btc-case-index {
         font-family: 'Inter', sans-serif; font-size: 0.72rem; color: var(--muted);
         padding-top: 6px;
       }
       .btc-case-title-wrap { flex: 1; min-width: 0; }
-      .btc-case-name-input {
-        width: 100%; border: none; background: none; outline: none;
+      .btc-case-title-wrap .btc-rte-inline:first-of-type .btc-rte-content-inline {
         font-size: 1.15rem; font-weight: 600; color: var(--ink);
-        padding: 2px 0; border-bottom: 1px solid transparent;
       }
-      .btc-case-name-input:focus { border-bottom-color: var(--rule-strong); }
-      .btc-case-citation-input {
-        width: 100%; border: none; background: none; outline: none;
+      .btc-case-title-wrap .btc-rte-inline + .btc-rte-inline .btc-rte-content-inline {
         font-style: italic; font-size: 0.84rem; color: var(--muted);
-        padding: 2px 0;
       }
-      .btc-case-body { padding-left: 30px; }
+      .btc-rte-inline { border: none; background: none; }
+      .btc-rte-content-inline {
+        padding: 2px 0; border-bottom: 1px solid transparent; min-height: 0;
+        font-family: 'Newsreader', Georgia, serif;
+      }
+      .btc-rte-content-inline:focus { border-bottom-color: var(--rule-strong); outline: none; }
+      .btc-case-body { padding-left: 44px; }
 
       .btc-note-badge {
         display: inline-block; font-family: 'Inter', sans-serif; font-size: 0.68rem;
