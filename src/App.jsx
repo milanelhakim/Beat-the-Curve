@@ -729,7 +729,7 @@ function noteToBlocks(note, idx) {
   if (note.type === "concept") {
     const titleText = htmlIsBlank(note.title) ? "Untitled concept" : htmlToPlainText(note.title);
     blocks.push({ type: "h4", text: `${idx}. Concept: ${titleText}` });
-    if (!htmlIsBlank(note.summary)) blocks.push({ type: "p", text: htmlToPlainText(note.summary) });
+    if (!htmlIsBlank(note.summary)) blocks.push(...htmlToBlocks(note.summary));
     const cases = (note.cases || []).filter((c) => c.caseName || c.note);
     if (cases.length) {
       blocks.push({ type: "p", text: "Linked cases:" });
@@ -746,7 +746,8 @@ function noteToBlocks(note, idx) {
     const titleText = htmlIsBlank(note.title) ? "Untitled doctrine" : htmlToPlainText(note.title);
     blocks.push({ type: "h4", text: `${idx}. Evolution of law: ${titleText}` });
     if (!htmlIsBlank(note.currentRule)) {
-      blocks.push({ type: "p", text: `Current governing rule: ${htmlToPlainText(note.currentRule)}` });
+      blocks.push({ type: "p", text: "Current governing rule:" });
+      blocks.push(...htmlToBlocks(note.currentRule));
     }
     const tl = (note.timeline || []).filter((t) => t.caseName || t.development);
     if (tl.length) {
@@ -765,20 +766,19 @@ function noteToBlocks(note, idx) {
     const citeText = htmlIsBlank(note.citation) ? "" : htmlToPlainText(note.citation);
     const cite = citeText ? ` — ${citeText}` : "";
     blocks.push({ type: "h4", text: `${idx}. ${name}${cite}` });
-    if (!htmlIsBlank(note.facts)) blocks.push({ type: "p", text: `Facts: ${htmlToPlainText(note.facts)}` });
-    if (!htmlIsBlank(note.procHistory))
-      blocks.push({ type: "p", text: `Procedural history: ${htmlToPlainText(note.procHistory)}` });
-    if (!htmlIsBlank(note.issue)) blocks.push({ type: "p", text: `Issue: ${htmlToPlainText(note.issue)}` });
-    if (!htmlIsBlank(note.holding)) blocks.push({ type: "p", text: `Holding: ${htmlToPlainText(note.holding)}` });
-    if (!htmlIsBlank(note.reasoning))
-      blocks.push({ type: "p", text: `Reasoning: ${htmlToPlainText(note.reasoning)}` });
+    const pushLabeled = (label, html) => {
+      if (htmlIsBlank(html)) return;
+      blocks.push({ type: "p", text: `${label}:` });
+      blocks.push(...htmlToBlocks(html));
+    };
+    pushLabeled("Facts", note.facts);
+    pushLabeled("Procedural history", note.procHistory);
+    pushLabeled("Issue", note.issue);
+    pushLabeled("Holding", note.holding);
+    pushLabeled("Reasoning", note.reasoning);
     if (note.includeDissent && (!htmlIsBlank(note.dissentSummary) || !htmlIsBlank(note.dissentSignificance))) {
-      if (!htmlIsBlank(note.dissentSummary)) {
-        blocks.push({ type: "p", text: `Dissenting opinion: ${htmlToPlainText(note.dissentSummary)}` });
-      }
-      if (!htmlIsBlank(note.dissentSignificance)) {
-        blocks.push({ type: "p", text: `Significance of dissent: ${htmlToPlainText(note.dissentSignificance)}` });
-      }
+      pushLabeled("Dissenting opinion", note.dissentSummary);
+      pushLabeled("Significance of dissent", note.dissentSignificance);
     }
   }
   blocks.push({ type: "space" });
@@ -796,11 +796,19 @@ function readingNotesBlocks(week) {
 }
 
 function lectureBlocks(week) {
-  return [
-    { type: "p", text: `Class discussion: ${htmlIsBlank(week.lecture.discussion) ? "—" : htmlToPlainText(week.lecture.discussion)}` },
-    { type: "p", text: `Professor's emphasis: ${htmlIsBlank(week.lecture.emphasis) ? "—" : htmlToPlainText(week.lecture.emphasis)}` },
-    { type: "p", text: `Key rules clarified: ${htmlIsBlank(week.lecture.keyRules) ? "—" : htmlToPlainText(week.lecture.keyRules)}` },
-  ];
+  const blocks = [];
+  const pushLabeled = (label, html) => {
+    blocks.push({ type: "p", text: `${label}:` });
+    if (htmlIsBlank(html)) {
+      blocks.push({ type: "p", text: "—" });
+    } else {
+      blocks.push(...htmlToBlocks(html));
+    }
+  };
+  pushLabeled("Class discussion", week.lecture.discussion);
+  pushLabeled("Professor's emphasis", week.lecture.emphasis);
+  pushLabeled("Key rules clarified", week.lecture.keyRules);
+  return blocks;
 }
 
 function readingsBlocks(week) {
@@ -881,6 +889,7 @@ function courseToBlocks(course) {
 }
 
 function blocksToHtml(blocks) {
+  const FONT = `font-family:Georgia,serif`;
   let html = "";
   let inList = false;
   const closeList = () => {
@@ -892,10 +901,10 @@ function blocksToHtml(blocks) {
   blocks.forEach((b) => {
     if (b.type === "li") {
       if (!inList) {
-        html += "<ul>";
+        html += `<ul style="${FONT}">`;
         inList = true;
       }
-      html += `<li>${escapeHtml(b.text)}</li>`;
+      html += `<li style="${FONT}">${escapeHtml(b.text)}</li>`;
       return;
     }
     closeList();
@@ -904,7 +913,7 @@ function blocksToHtml(blocks) {
     } else if (b.type === "pagebreak") {
       html += `<div style="page-break-before:always"></div>`;
     } else {
-      html += `<${b.type}>${escapeHtml(b.text)}</${b.type}>`;
+      html += `<${b.type} style="${FONT}">${escapeHtml(b.text)}</${b.type}>`;
     }
   });
   closeList();
@@ -967,7 +976,14 @@ async function blocksToDocxAndSave(blocks, title, filename) {
     new Paragraph({ text: title, heading: HeadingLevel.TITLE, spacing: { after: 240 } }),
     ...blocksToDocxParagraphs(docxLib, blocks),
   ];
-  const doc = new Document({ sections: [{ children: paragraphs }] });
+  const doc = new Document({
+    styles: {
+      default: {
+        document: { run: { font: "Georgia" } },
+      },
+    },
+    sections: [{ children: paragraphs }],
+  });
   const blob = await Packer.toBlob(doc);
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -1210,7 +1226,7 @@ async function driveMoveToFolder(fileId, newParentId) {
 function buildSimpleHtmlDoc(title, bodyHtml) {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(
     title
-  )}</title></head><body>${bodyHtml}</body></html>`;
+  )}</title><style>body,p,div,li,h1,h2,h3,h4{font-family:Georgia,serif;}</style></head><body style="font-family:Georgia,serif;">${bodyHtml}</body></html>`;
 }
 
 // Drive converts uploaded HTML into a native Google Doc's content on create, and
@@ -2062,7 +2078,7 @@ function RichTextField({ value, onChange, placeholder, minHeight = 90, inline = 
 // being edited (via onMouseDown preventDefault, same trick used everywhere
 // else in this file), the command applies to whichever field the user was
 // just typing in, wherever it is on the page.
-function GlobalFormatToolbar({ open, onClose }) {
+function GlobalFormatToolbar({ open, onToggle }) {
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkInput, setLinkInput] = useState("");
   const savedRangeRef = useRef(null);
@@ -2094,7 +2110,15 @@ function GlobalFormatToolbar({ open, onClose }) {
     return () => document.removeEventListener("mouseup", onMouseUp);
   }, [painting, paintFormat]);
 
-  if (!open) return null;
+  if (!open) {
+    return (
+      <div className="btc-format-rail btc-format-rail-collapsed">
+        <button className="btc-sidebar-collapse-btn" onClick={onToggle} title="Show formatting toolbar">
+          <ChevronLeft size={16} />
+        </button>
+      </div>
+    );
+  }
 
   const exec = (cmd, arg) => document.execCommand(cmd, false, arg);
 
@@ -2150,8 +2174,8 @@ function GlobalFormatToolbar({ open, onClose }) {
     <div className="btc-format-rail">
       <div className="btc-format-rail-head">
         <span>Formatting</span>
-        <button className="btc-icon-btn small" onClick={onClose} title="Hide toolbar">
-          <ChevronRight size={15} />
+        <button className="btc-sidebar-collapse-btn" onClick={onToggle} title="Tuck away">
+          <ChevronRight size={16} />
         </button>
       </div>
       <div className="btc-format-rail-body">
@@ -4585,9 +4609,9 @@ export default function BeatTheCurve() {
 
   const [formatToolbarOpen, setFormatToolbarOpen] = useState(() => {
     try {
-      return localStorage.getItem(FORMAT_TOOLBAR_OPEN_KEY) === "1";
+      return localStorage.getItem(FORMAT_TOOLBAR_OPEN_KEY) !== "0";
     } catch (e) {
-      return false;
+      return true;
     }
   });
   useEffect(() => {
@@ -5288,13 +5312,6 @@ export default function BeatTheCurve() {
             </button>
           )}
           <button
-            className={`btc-btn btc-btn-outline small${formatToolbarOpen ? " active" : ""}`}
-            onClick={() => setFormatToolbarOpen((v) => !v)}
-            title={formatToolbarOpen ? "Hide formatting toolbar" : "Show formatting toolbar"}
-          >
-            <Bold size={14} />
-          </button>
-          <button
             className="btc-btn btc-btn-outline small"
             onClick={() => setDarkMode((v) => !v)}
             title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
@@ -5454,7 +5471,7 @@ export default function BeatTheCurve() {
           signOutGoogle();
         }}
       />
-      <GlobalFormatToolbar open={formatToolbarOpen} onClose={() => setFormatToolbarOpen(false)} />
+      <GlobalFormatToolbar open={formatToolbarOpen} onToggle={() => setFormatToolbarOpen((v) => !v)} />
       {currentCourse && showOutlineModal && (
         <CourseDocModal
           title={`${currentCourse.name} — Course Outline`}
@@ -6287,6 +6304,10 @@ function BaseStyles() {
         background: var(--paper-raised); border-left: 1px solid var(--rule);
         box-shadow: -6px 0 18px rgba(0,0,0,0.06);
         display: flex; flex-direction: column;
+        transition: width 0.18s ease;
+      }
+      .btc-format-rail-collapsed {
+        width: 34px; box-shadow: none; align-items: center; padding-top: 18px;
       }
       .btc-format-rail-head {
         display: flex; align-items: center; justify-content: space-between;
