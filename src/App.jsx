@@ -74,6 +74,7 @@ const DRIVE_MAP_KEY = "beat-the-curve-drive-map";
 const DRIVE_SYNC_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 const DARK_MODE_KEY = "beat-the-curve-dark-mode";
 const APP_ZOOM_KEY = "beat-the-curve-app-zoom";
+const SIDEBAR_COLLAPSED_KEY = "beat-the-curve-sidebar-collapsed";
 const PANEL_WIDTH_KEY = "beat-the-curve-panel-width";
 const TAB_ORDER_KEY = "beat-the-curve-tab-order";
 const DEFAULT_TAB_ORDER = ["reading", "lecture", "files"];
@@ -3684,7 +3685,7 @@ function CourseSwitcher({ courses, currentId, onSelect, onCreate, onRename, onDe
 /*  Sidebar                                                              */
 /* ------------------------------------------------------------------ */
 
-function Sidebar({ course, nav, setNav, mobileOpen, closeMobile }) {
+function Sidebar({ course, nav, setNav, mobileOpen, closeMobile, collapsed, onToggleCollapsed }) {
   const goWeek = (weekNum) => {
     setNav((n) => ({ ...n, view: "week", weekNum }));
     closeMobile();
@@ -3694,9 +3695,24 @@ function Sidebar({ course, nav, setNav, mobileOpen, closeMobile }) {
     closeMobile();
   };
 
+  if (collapsed) {
+    return (
+      <nav className={`btc-sidebar btc-sidebar-collapsed${mobileOpen ? " open" : ""}`}>
+        <button className="btc-sidebar-collapse-btn" onClick={onToggleCollapsed} title="Show weeks">
+          <ChevronRight size={16} />
+        </button>
+      </nav>
+    );
+  }
+
   return (
     <nav className={`btc-sidebar${mobileOpen ? " open" : ""}`}>
-      <div className="btc-sidebar-section-label">Weeks</div>
+      <div className="btc-sidebar-top-row">
+        <div className="btc-sidebar-section-label">Weeks</div>
+        <button className="btc-sidebar-collapse-btn" onClick={onToggleCollapsed} title="Tuck away">
+          <ChevronLeft size={16} />
+        </button>
+      </div>
       <ul className="btc-week-nav">
         {course.weeks.map((w) => {
           const has = weekHasContent(w);
@@ -4063,6 +4079,19 @@ export default function BeatTheCurve() {
     window.addEventListener("wheel", onWheel, { passive: false });
     return () => window.removeEventListener("wheel", onWheel);
   }, []);
+
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
+    } catch (e) {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed ? "1" : "0");
+    } catch (e) {}
+  }, [sidebarCollapsed]);
 
   // Same idea as dark mode: a display preference, not course content.
   // The note/outline/prewrite panels share this one adjustable width, dragged
@@ -4846,6 +4875,8 @@ export default function BeatTheCurve() {
               setNav={setNav}
               mobileOpen={mobileOpen}
               closeMobile={() => setMobileOpen(false)}
+              collapsed={sidebarCollapsed}
+              onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
             />
             <main className="btc-main">
               <ResizablePane width={panelWidth} onResizeStart={startPanelResize}>
@@ -5145,7 +5176,23 @@ function BaseStyles() {
         background: var(--paper-raised);
         padding: 18px 12px 24px;
         overflow-y: auto;
+        transition: width 0.18s ease;
       }
+      .btc-sidebar-collapsed {
+        width: 34px; padding: 18px 0; overflow: visible;
+        display: flex; justify-content: center;
+      }
+      .btc-sidebar-collapse-btn {
+        background: none; border: 1px solid var(--rule-strong); border-radius: 3px;
+        color: var(--muted); padding: 4px; display: flex; align-items: center; justify-content: center;
+        flex-shrink: 0;
+      }
+      .btc-sidebar-collapse-btn:hover { background: var(--rule); color: var(--ink); }
+      .btc-sidebar-top-row {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 0 6px 8px 10px;
+      }
+      .btc-sidebar-top-row .btc-sidebar-section-label { padding: 0; }
       .btc-sidebar-section-label {
         font-family: 'Inter', sans-serif;
         font-size: 0.7rem;
