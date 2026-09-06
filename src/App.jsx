@@ -1336,20 +1336,6 @@ function loadJsPDF() {
   return jsPDFPromise;
 }
 
-const PDFJS_VERSION = "3.11.174";
-let pdfJsPromise = null;
-function loadPdfJs() {
-  if (!pdfJsPromise) {
-    pdfJsPromise = loadExternalScript(
-      `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.min.js`
-    ).then(() => {
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.js`;
-      return window.pdfjsLib;
-    });
-  }
-  return pdfJsPromise;
-}
-
 async function blocksToPdfAndSave(blocks, filename) {
   const JsPDFCtor = await loadJsPDF();
   const doc = new JsPDFCtor({ unit: "pt", format: "letter" });
@@ -1868,49 +1854,26 @@ function NoteActions({ onOutline, onPrewrite, onDelete }) {
 }
 
 function PdfViewer({ blob, fileId, onMissing }) {
-  const [pdfjsLib, setPdfjsLib] = useState(null);
-  const [pdfDoc, setPdfDoc] = useState(null);
-  const [numPages, setNumPages] = useState(0);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [scale, setScale] = useState(1.15);
+  const [objectUrl, setObjectUrl] = useState(null);
   const [status, setStatus] = useState("loading"); // loading | ready | error
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const canvasRef = useRef(null);
-  const textLayerRef = useRef(null);
-  const thumbRefs = useRef({});
-  const renderTaskRef = useRef(null);
-  const mouseDownPosRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
-    loadPdfJs()
-      .then((lib) => {
-        if (!cancelled) setPdfjsLib(lib);
-      })
-      .catch(() => {
-        if (!cancelled) setStatus("error");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!pdfjsLib) return;
-    let cancelled = false;
+    let createdUrl = null;
     setStatus("loading");
-    setPdfDoc(null);
+    setObjectUrl(null);
     (async () => {
       try {
         let sourceBlob = blob;
         if (!sourceBlob && fileId) sourceBlob = await driveDownloadBinary(fileId);
         if (!sourceBlob) throw new Error("No PDF source");
-        const data = await sourceBlob.arrayBuffer();
-        const doc = await pdfjsLib.getDocument({ data }).promise;
-        if (cancelled) return;
-        setPdfDoc(doc);
-        setNumPages(doc.numPages);
-        setCurrentPage(1);
+        createdUrl = URL.createObjectURL(sourceBlob);
+        if (cancelled) {
+          URL.revokeObjectURL(createdUrl);
+          return;
+        }
+        setObjectUrl(createdUrl);
         setStatus("ready");
       } catch (e) {
         if (!cancelled) setStatus("error");
@@ -1918,108 +1881,17 @@ function PdfViewer({ blob, fileId, onMissing }) {
     })();
     return () => {
       cancelled = true;
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pdfjsLib, blob, fileId]);
+  }, [blob, fileId]);
 
-  // Renders the page at devicePixelRatio resolution into the canvas's actual
-  // pixel buffer, while keeping its CSS (display) size at the logical scale —
-  // the standard fix for canvases looking soft/pixelated on retina displays.
-  useEffect(() => {
-    if (!pdfDoc || !canvasRef.current) return;
-    let cancelled = false;
-    (async () => {
-      const page = await pdfDoc.getPage(currentPage);
-      if (cancelled) return;
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const viewport = page.getViewport({ scale });
-      const renderViewport = page.getViewport({ scale: scale * dpr });
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      canvas.width = renderViewport.width;
-      canvas.height = renderViewport.height;
-      canvas.style.width = `${viewport.width}px`;
-      canvas.style.height = `${viewport.height}px`;
-      const ctx = canvas.getContext("2d");
-      if (renderTaskRef.current) {
-        try {
-          renderTaskRef.current.cancel();
-        } catch (e) {}
-      }
-      const task = page.render({ canvasContext: ctx, viewport: renderViewport });
-      renderTaskRef.current = task;
-      try {
-        await task.promise;
-      } catch (e) {
-        // render cancelled by a newer page/zoom change — safe to ignore
-      }
-      if (cancelled) return;
-
-      // Text layer: invisible, precisely-positioned real text sitting over the
-      // canvas so the rendered page can be selected, copied, and highlighted
-      // like normal text. Sized to the logical (non-DPR) viewport, matching
-      // the canvas's CSS display size.
-      const textLayerEl = textLayerRef.current;
-      if (textLayerEl && pdfjsLib.renderTextLayer) {
-        textLayerEl.innerHTML = "";
-        textLayerEl.style.width = `${viewport.width}px`;
-        textLayerEl.style.height = `${viewport.height}px`;
-        try {
-          const textContent = await page.getTextContent();
-          if (cancelled) return;
-          await pdfjsLib.renderTextLayer({
-            textContentSource: textContent,
-            container: textLayerEl,
-            viewport,
-            textDivs: [],
-          }).promise;
-        } catch (e) {
-          // selection layer is a nice-to-have — don't fail the visible render over it
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [pdfDoc, currentPage, scale, pdfjsLib]);
-
-  useEffect(() => {
-    if (!pdfDoc) return;
-    let cancelled = false;
-    (async () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      for (let i = 1; i <= pdfDoc.numPages; i++) {
-        if (cancelled) return;
-        const canvas = thumbRefs.current[i];
-        if (!canvas) continue;
-        try {
-          const page = await pdfDoc.getPage(i);
-          if (cancelled) return;
-          const viewport = page.getViewport({ scale: 0.16 });
-          const renderViewport = page.getViewport({ scale: 0.16 * dpr });
-          canvas.width = renderViewport.width;
-          canvas.height = renderViewport.height;
-          canvas.style.width = `${viewport.width}px`;
-          canvas.style.height = `${viewport.height}px`;
-          const ctx = canvas.getContext("2d");
-          await page.render({ canvasContext: ctx, viewport: renderViewport }).promise;
-        } catch (e) {
-          // a single failed thumbnail shouldn't block the rest
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [pdfDoc]);
-
-  // Fullscreen: Escape to exit, arrow keys to flip pages.
+  // Fullscreen: Escape to exit. Page navigation/zoom/search inside the frame
+  // are handled entirely by the browser's own native PDF viewer.
   useEffect(() => {
     if (!isFullscreen) return;
     const onKey = (e) => {
       if (e.key === "Escape") setIsFullscreen(false);
-      else if (e.key === "ArrowLeft") setCurrentPage((p) => Math.max(1, p - 1));
-      else if (e.key === "ArrowRight") setCurrentPage((p) => Math.min(numPages, p + 1));
     };
     document.addEventListener("keydown", onKey);
     const prevOverflow = document.body.style.overflow;
@@ -2028,25 +1900,7 @@ function PdfViewer({ blob, fileId, onMissing }) {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prevOverflow;
     };
-  }, [isFullscreen, numPages]);
-
-  // Click-to-flip: click the left half of the page to go back, right half to
-  // advance — but only for an actual click, not a text-selection drag.
-  const handlePageMouseDown = (e) => {
-    mouseDownPosRef.current = { x: e.clientX, y: e.clientY };
-  };
-  const handlePageMouseUp = (e) => {
-    const start = mouseDownPosRef.current;
-    mouseDownPosRef.current = null;
-    if (!start) return;
-    if (Math.abs(e.clientX - start.x) > 6 || Math.abs(e.clientY - start.y) > 6) return;
-    const sel = window.getSelection();
-    if (sel && sel.toString().trim()) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    if (clickX < rect.width / 2) setCurrentPage((p) => Math.max(1, p - 1));
-    else setCurrentPage((p) => Math.min(numPages, p + 1));
-  };
+  }, [isFullscreen]);
 
   if (status === "error") {
     return (
@@ -2063,95 +1917,26 @@ function PdfViewer({ blob, fileId, onMissing }) {
 
   const viewerBody = (
     <div className={`btc-pdf-viewer${isFullscreen ? " btc-pdf-viewer-fullscreen" : ""}`}>
-      <div className="btc-pdf-thumbs">
-        {status === "loading" && !numPages ? (
-          <div className="btc-pdf-thumbs-loading">
-            <Loader2 size={16} className="btc-spin" />
+      <div className="btc-pdf-toolbar">
+        <span className="btc-pdf-page-indicator">
+          Rendered natively — use the viewer's own controls to zoom, search, or page through.
+        </span>
+        <button
+          className="btc-icon-btn"
+          title={isFullscreen ? "Exit full screen" : "Full screen"}
+          onClick={() => setIsFullscreen((v) => !v)}
+        >
+          <FullscreenIcon active={isFullscreen} size={14} />
+        </button>
+      </div>
+      <div className="btc-pdf-native-frame-wrap">
+        {status === "loading" || !objectUrl ? (
+          <div className="btc-pdf-native-loading">
+            <Loader2 size={20} className="btc-spin" />
           </div>
         ) : (
-          Array.from({ length: numPages }, (_, i) => i + 1).map((n) => (
-            <button
-              key={n}
-              className={`btc-pdf-thumb${n === currentPage ? " active" : ""}`}
-              onClick={() => setCurrentPage(n)}
-            >
-              <canvas ref={(el) => (thumbRefs.current[n] = el)} />
-              <span>{n}</span>
-            </button>
-          ))
+          <iframe title="PDF document" src={objectUrl} className="btc-pdf-native-frame" />
         )}
-      </div>
-      <div className="btc-pdf-main">
-        <div className="btc-pdf-toolbar">
-          <button
-            className="btc-icon-btn"
-            title="Previous page"
-            disabled={currentPage <= 1}
-            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-          >
-            <ChevronLeft size={15} />
-          </button>
-          <span className="btc-pdf-page-indicator">
-            {numPages ? `Page ${currentPage} of ${numPages}` : "—"}
-          </span>
-          <button
-            className="btc-icon-btn"
-            title="Next page"
-            disabled={currentPage >= numPages}
-            onClick={() => setCurrentPage((p) => Math.min(numPages, p + 1))}
-          >
-            <ChevronRight size={15} />
-          </button>
-          <span className="btc-rte-sep" />
-          <button className="btc-icon-btn" title="Zoom out" onClick={() => setScale((s) => Math.max(0.5, s - 0.15))}>
-            <ZoomOut size={14} />
-          </button>
-          <button className="btc-icon-btn" title="Zoom in" onClick={() => setScale((s) => Math.min(3, s + 0.15))}>
-            <ZoomIn size={14} />
-          </button>
-          <span className="btc-rte-sep" />
-          <button
-            className="btc-icon-btn"
-            title={isFullscreen ? "Exit full screen" : "Full screen"}
-            onClick={() => setIsFullscreen((v) => !v)}
-          >
-            <FullscreenIcon active={isFullscreen} size={14} />
-          </button>
-        </div>
-        <div
-          className="btc-pdf-canvas-wrap"
-          onMouseDown={handlePageMouseDown}
-          onMouseUp={handlePageMouseUp}
-        >
-          {status === "loading" ? (
-            <Loader2 size={20} className="btc-spin" />
-          ) : (
-            <div className="btc-pdf-page-wrap">
-              <canvas ref={canvasRef} />
-              <div ref={textLayerRef} className="btc-pdf-text-layer" />
-              {isFullscreen && (
-                <>
-                  <button
-                    className="btc-pdf-nav-arrow left"
-                    title="Previous page"
-                    disabled={currentPage <= 1}
-                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                  >
-                    <ChevronLeft size={22} />
-                  </button>
-                  <button
-                    className="btc-pdf-nav-arrow right"
-                    title="Next page"
-                    disabled={currentPage >= numPages}
-                    onClick={() => setCurrentPage((p) => Math.min(numPages, p + 1))}
-                  >
-                    <ChevronRight size={22} />
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-        </div>
       </div>
     </div>
   );
@@ -2161,6 +1946,7 @@ function PdfViewer({ blob, fileId, onMissing }) {
   }
   return viewerBody;
 }
+
 
 
 function CaseBriefCard({ index, data, onChange, onDelete, onOutline, onPrewrite, flashId }) {
@@ -2801,7 +2587,7 @@ function NextDeadlineBadge({ course }) {
 const WEEK_TAB_KEYS = ["reading", "lecture", "files"];
 const WEEK_TAB_LABELS = { reading: "Reading notes", lecture: "Lecture notes", files: "Readings" };
 
-function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCourse, showToast, flashId, driveStatus, onUploadReading, onDeleteReading, onConnectDrive }) {
+function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCourse, showToast, flashId, driveStatus, onUploadReading, onDeleteReading, onConnectDrive, onOpenOutline, onOpenReadingSchedule, onOpenAssignments }) {
   const week = course.weeks[weekNum - 1];
 
   const updateNote = (noteId, next) => {
@@ -2929,6 +2715,17 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
         <div>
           <span className="btc-week-eyebrow">{course.name}</span>
           <EditableWeekTitle week={week} onRename={renameWeek} />
+        </div>
+        <div className="btc-week-doc-group">
+          <button className="btc-btn btc-btn-outline small" onClick={onOpenOutline}>
+            <BookOpen size={13} /> Course Outline
+          </button>
+          <button className="btc-btn btc-btn-outline small" onClick={onOpenReadingSchedule}>
+            <FileText size={13} /> Reading Schedule
+          </button>
+          <button className="btc-btn btc-btn-outline small" onClick={onOpenAssignments}>
+            <ListTree size={13} /> Assignments
+          </button>
         </div>
         <div className="btc-week-download-group">
           <DownloadMenu
@@ -4796,15 +4593,6 @@ export default function BeatTheCurve() {
               onDelete={requestDeleteCourse}
             />
             <div className="btc-course-doc-group">
-              <button className="btc-btn btc-btn-outline small" onClick={() => setShowOutlineModal(true)}>
-                <BookOpen size={13} /> Course Outline
-              </button>
-              <button className="btc-btn btc-btn-outline small" onClick={() => setShowReadingScheduleModal(true)}>
-                <FileText size={13} /> Reading Schedule
-              </button>
-              <button className="btc-btn btc-btn-outline small" onClick={() => setShowAssignmentsModal(true)}>
-                <ListTree size={13} /> Assignments
-              </button>
               <NextDeadlineBadge course={currentCourse} />
             </div>
             <DownloadMenu
@@ -4840,6 +4628,9 @@ export default function BeatTheCurve() {
                     onUploadReading={uploadReadingPdf}
                     onDeleteReading={deleteReadingPdf}
                     onConnectDrive={signInWithGoogle}
+                    onOpenOutline={() => setShowOutlineModal(true)}
+                    onOpenReadingSchedule={() => setShowReadingScheduleModal(true)}
+                    onOpenAssignments={() => setShowAssignmentsModal(true)}
                   />
                 ) : nav.synthTab === "outline" ? (
                   <OutlineView
@@ -5374,23 +5165,7 @@ function BaseStyles() {
 
       /* ---------- PDF viewer ---------- */
       .btc-pdf-viewer {
-        display: flex; gap: 12px; flex: 1; min-height: 0; width: 100%;
-      }
-      .btc-pdf-thumbs {
-        width: 96px; flex-shrink: 0; overflow-y: auto;
-        display: flex; flex-direction: column; gap: 8px; padding: 2px;
-      }
-      .btc-pdf-thumbs-loading { display: flex; justify-content: center; padding: 20px 0; color: var(--muted); }
-      .btc-pdf-thumb {
-        background: none; border: 1px solid var(--rule-strong); border-radius: 2px;
-        padding: 4px; display: flex; flex-direction: column; align-items: center; gap: 3px;
-      }
-      .btc-pdf-thumb canvas { width: 100%; height: auto; display: block; box-shadow: 0 1px 3px rgba(0,0,0,0.15); }
-      .btc-pdf-thumb span { font-family: 'Inter', sans-serif; font-size: 0.68rem; color: var(--muted); }
-      .btc-pdf-thumb.active { border-color: var(--spine); background: var(--spine-soft); }
-      .btc-pdf-thumb.active span { color: var(--spine); font-weight: 600; }
-      .btc-pdf-main {
-        flex: 1; min-width: 0; display: flex; flex-direction: column;
+        display: flex; flex-direction: column; flex: 1; min-height: 0; width: 100%;
         border: 1px solid var(--rule); border-radius: 3px; overflow: hidden;
       }
       .btc-pdf-toolbar {
@@ -5401,28 +5176,20 @@ function BaseStyles() {
         font-family: 'Inter', sans-serif; font-size: 0.78rem; color: var(--ink-soft);
         margin: 0 6px; white-space: nowrap;
       }
-      .btc-pdf-canvas-wrap {
-        flex: 1; overflow: auto; display: flex; justify-content: center;
-        align-items: flex-start; padding: 16px; background: var(--paper);
+      .btc-pdf-native-frame-wrap {
+        flex: 1; min-height: 480px; background: #6b6b6b; display: flex;
       }
-      .btc-pdf-canvas-wrap canvas { box-shadow: 0 2px 10px rgba(0,0,0,0.18); max-width: 100%; }
-      .btc-pdf-page-wrap { position: relative; }
-      .btc-pdf-text-layer {
-        position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-        overflow: hidden; line-height: 1; opacity: 1;
+      .btc-pdf-native-loading { margin: auto; color: var(--muted); }
+      .btc-pdf-native-frame {
+        flex: 1; width: 100%; height: 100%; min-height: 480px; border: none; background: #fff;
       }
-      .btc-pdf-text-layer span, .btc-pdf-text-layer br {
-        color: transparent; position: absolute; white-space: pre; cursor: text;
-        transform-origin: 0% 0%;
-      }
-      .btc-pdf-text-layer ::selection { background: rgba(31, 55, 55, 0.35); }
 
       .btc-pdf-fullscreen-overlay {
         position: fixed; inset: 0; z-index: 200; background: var(--paper);
         padding: 16px; display: flex;
       }
       .btc-pdf-viewer-fullscreen { height: 100%; width: 100%; }
-      .btc-pdf-viewer-fullscreen .btc-pdf-canvas-wrap { background: var(--rule-strong); }
+      .btc-pdf-viewer-fullscreen .btc-pdf-native-frame-wrap { min-height: 0; }
 
       .btc-pdf-nav-arrow {
         position: absolute; top: 50%; transform: translateY(-50%);
@@ -5739,6 +5506,7 @@ function BaseStyles() {
         background: none; color: var(--ink); padding: 2px 0; min-width: 240px;
       }
       .btc-week-download-group { display: flex; flex-wrap: wrap; gap: 6px; }
+      .btc-week-doc-group { display: flex; flex-wrap: wrap; gap: 6px; }
       .btc-course-rename-input {
         flex: 1; border: none; border-bottom: 1px solid var(--rule-strong);
         background: none; padding: 9px 12px; font-size: 0.95rem; color: var(--ink);
