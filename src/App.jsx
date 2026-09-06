@@ -1230,6 +1230,18 @@ async function driveDeleteFile(fileId) {
   });
 }
 
+async function driveRenameFile(fileId, newName) {
+  const token = getDriveAccessToken();
+  if (!token) throw new Error("No Drive access token");
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,name`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ name: newName }),
+  });
+  if (!res.ok) throw new Error(`Drive rename failed (${res.status})`);
+  return res.json();
+}
+
 // All of a course's weeks (that have content) combined into one block list,
 // with a page-break marker between each — this is what becomes the single
 // per-course Google Doc, instead of a separate Doc per week.
@@ -1280,10 +1292,21 @@ async function runDriveSync(data, mapIn) {
   }
 
   for (const course of data.courses) {
-    const existing = map.courses[course.id] || { folderId: null, docId: null };
+    const existing = map.courses[course.id] || { folderId: null, docId: null, folderName: null };
     let folderId;
     try {
       folderId = await ensureFolder(existing.folderId, course.name, map.rootFolderId);
+      // Keep the Drive folder's name in sync with the course name. ensureFolder
+      // only creates-or-verifies — it won't rename an existing folder itself —
+      // so if the course was renamed since our last sync, push that rename to
+      // the actual Drive folder too rather than leaving it stuck under the old name.
+      if (existing.folderId === folderId && existing.folderName && existing.folderName !== course.name) {
+        try {
+          await driveRenameFile(folderId, course.name);
+        } catch (e) {
+          // Not fatal — the folder just keeps its old name until the next sync retries.
+        }
+      }
     } catch (e) {
       hadError = true;
       map.courses[course.id] = existing;
@@ -1320,7 +1343,7 @@ async function runDriveSync(data, mapIn) {
       }
     }
 
-    map.courses[course.id] = { ...existing, folderId, docId };
+    map.courses[course.id] = { ...existing, folderId, docId, folderName: course.name };
   }
 
   return { map, hadError };
@@ -4071,6 +4094,7 @@ export default function BeatTheCurve() {
      for it, so a stale/empty local `data` can never race ahead and overwrite
      the real cloud copy before it's even had a chance to load in. */
   const [cloudSyncReady, setCloudSyncReady] = useState(false);
+  const lastPushedAtRef = useRef(null);
   useEffect(() => {
     if (!session?.user) {
       setCloudSyncReady(false);
@@ -4110,11 +4134,14 @@ export default function BeatTheCurve() {
           (payload) => {
             const incoming = payload.new && payload.new.NoteBook;
             if (!incoming) return;
-            setData((current) => {
-              // Skip re-applying the change we just pushed ourselves.
-              if (JSON.stringify(incoming) === JSON.stringify(current)) return current;
-              return hydrateData(incoming);
-            });
+            // Skip re-applying the change we just pushed ourselves. Comparing
+            // JSON text here would be unreliable — Postgres's jsonb storage
+            // doesn't guarantee preserving key order, so our own echoed
+            // update could look "different" and falsely trigger a re-apply,
+            // which would re-trigger our own push again — a feedback loop.
+            // Comparing the exact timestamp we ourselves wrote is deterministic.
+            if (payload.new.updated_at && payload.new.updated_at === lastPushedAtRef.current) return;
+            setData(hydrateData(incoming));
           }
         )
         .subscribe();
@@ -4132,10 +4159,12 @@ export default function BeatTheCurve() {
   useEffect(() => {
     if (!loaded || !session?.user || !cloudSyncReady) return;
     const t = setTimeout(() => {
+      const updatedAt = new Date().toISOString();
+      lastPushedAtRef.current = updatedAt;
       supabase
         .from("notes")
         .upsert(
-          { user_id: session.user.id, NoteBook: data, updated_at: new Date().toISOString() },
+          { user_id: session.user.id, NoteBook: data, updated_at: updatedAt },
           { onConflict: "user_id" }
         )
         .then(({ error }) => {
