@@ -41,7 +41,6 @@ import {
   ZoomIn,
   ZoomOut,
   ChevronLeft,
-  Columns2,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
@@ -1421,6 +1420,27 @@ function TextArea(props) {
   return <textarea className="btc-textarea" spellCheck="false" {...props} />;
 }
 
+// A tiny inline icon (not from lucide-react) drawn to match lucide's stroke
+// style. Using our own SVG here avoids depending on a specific icon name
+// existing in whatever lucide-react version is pinned in package.json.
+function SplitViewIcon({ size = 13 }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="3" y="4" width="8" height="16" rx="1" />
+      <rect x="13" y="4" width="8" height="16" rx="1" />
+    </svg>
+  );
+}
+
 const RTE_FONT_SIZES = [
   { value: "2", label: "Small" },
   { value: "3", label: "Normal" },
@@ -2660,7 +2680,7 @@ function WeekView({ course, weekNum, weekTab, setWeekTab, updateWeek, updateCour
             onClick={() => setSplitOn((v) => !v)}
             title="View two tabs side by side"
           >
-            <Columns2 size={13} /> Split view
+            <SplitViewIcon size={13} /> Split view
           </button>
           {splitOn && (
             <select
