@@ -3415,35 +3415,48 @@ function CourseSwitcher({ courses, currentId, onSelect, onCreate, onRename, onDe
   const ref = useRef(null);
   const current = courses.find((c) => c.id === currentId);
 
+  // Saves whatever's currently being typed (if anything) before doing
+  // anything else. Every path that can close the popover, switch courses, or
+  // start editing a different course routes through this first, so a rename
+  // can never be silently discarded no matter how the popover gets dismissed.
+  const commitEdit = useCallback(() => {
+    setEditingId((id) => {
+      if (id) {
+        setEditValue((val) => {
+          if (val.trim()) onRename(id, val.trim());
+          return val;
+        });
+      }
+      return null;
+    });
+  }, [onRename]);
+
   useEffect(() => {
     const onClick = (e) => {
       if (ref.current && !ref.current.contains(e.target)) {
-        if (editingId && editValue.trim()) {
-          onRename(editingId, editValue.trim());
-        }
+        commitEdit();
         setOpen(false);
-        setEditingId(null);
       }
     };
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
-  }, [editingId, editValue, onRename]);
+  }, [commitEdit]);
 
   const startEdit = (c) => {
+    commitEdit();
     setEditingId(c.id);
     setEditValue(c.name);
   };
 
-  const commitEdit = () => {
-    if (editingId && editValue.trim()) {
-      onRename(editingId, editValue.trim());
-    }
-    setEditingId(null);
-  };
-
   return (
     <div className="btc-course-switch" ref={ref}>
-      <button className="btc-course-switch-btn" onClick={() => setOpen(!open)}>
+      <button
+        className="btc-course-switch-btn"
+        onClick={() => {
+          commitEdit();
+          setOpen((v) => !v);
+        }}
+      >
         <span className="btc-course-switch-label">{current ? current.name : "Select course"}</span>
         <ChevronDown size={14} />
       </button>
@@ -3471,6 +3484,7 @@ function CourseSwitcher({ courses, currentId, onSelect, onCreate, onRename, onDe
                   <button
                     className="btc-course-popover-name"
                     onClick={() => {
+                      commitEdit();
                       onSelect(c.id);
                       setOpen(false);
                     }}
@@ -3489,6 +3503,7 @@ function CourseSwitcher({ courses, currentId, onSelect, onCreate, onRename, onDe
                   className="btc-icon-btn small"
                   title="Delete course"
                   onClick={() => {
+                    commitEdit();
                     onDelete(c.id);
                     setOpen(false);
                   }}
