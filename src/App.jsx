@@ -75,6 +75,7 @@ const DRIVE_SYNC_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 const DARK_MODE_KEY = "beat-the-curve-dark-mode";
 const APP_ZOOM_KEY = "beat-the-curve-app-zoom";
 const SIDEBAR_COLLAPSED_KEY = "beat-the-curve-sidebar-collapsed";
+const FORMAT_TOOLBAR_OPEN_KEY = "beat-the-curve-format-toolbar-open";
 const PANEL_WIDTH_KEY = "beat-the-curve-panel-width";
 const TAB_ORDER_KEY = "beat-the-curve-tab-order";
 const DEFAULT_TAB_ORDER = ["reading", "lecture", "files"];
@@ -1573,6 +1574,25 @@ function DragHandleIcon({ size = 14 }) {
   );
 }
 
+function Paintbrush({ size = 14 }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M18.4 3.6a2 2 0 0 1 2.8 2.8l-7.4 7.4-3.2-.2-.2-3.2z" />
+      <path d="M11 12 4.5 18.5a2.1 2.1 0 0 0 3 3L14 15" />
+      <path d="M3.5 20.5c1.5.5 3-1 2-2.5" />
+    </svg>
+  );
+}
+
 function FullscreenIcon({ active, size = 14 }) {
   return active ? (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1646,6 +1666,36 @@ function sanitizePastedHtml(html) {
         child.setAttribute("rel", "noopener noreferrer");
       }
       clean(child);
+    });
+  };
+  clean(container);
+  return container.innerHTML;
+}
+
+// For inline heading/citation fields: keep a pasted link, but discard all
+// visual formatting (bold, italic, color, font size) so pasted text can't
+// make the heading look inconsistent with the rest of the app.
+function sanitizeInlinePasteHtml(html) {
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  const clean = (node) => {
+    [...node.childNodes].forEach((child) => {
+      if (child.nodeType === 3) return;
+      if (child.nodeType !== 1) {
+        node.removeChild(child);
+        return;
+      }
+      if (child.tagName === "A") {
+        const href = child.getAttribute("href");
+        [...child.attributes].forEach((attr) => child.removeAttribute(attr.name));
+        if (href) child.setAttribute("href", href);
+        child.setAttribute("target", "_blank");
+        child.setAttribute("rel", "noopener noreferrer");
+        child.textContent = child.textContent; // drop any nested bold/italic inside the link text
+        return;
+      }
+      while (child.firstChild) node.insertBefore(child.firstChild, child);
+      node.removeChild(child);
     });
   };
   clean(container);
@@ -1852,7 +1902,7 @@ function RichTextField({ value, onChange, placeholder, minHeight = 90, inline = 
     const html = e.clipboardData.getData("text/html");
     const text = e.clipboardData.getData("text/plain");
     if (html) {
-      document.execCommand("insertHTML", false, sanitizePastedHtml(html));
+      document.execCommand("insertHTML", false, inline ? sanitizeInlinePasteHtml(html) : sanitizePastedHtml(html));
     } else if (text) {
       document.execCommand("insertText", false, text);
     }
@@ -1861,100 +1911,6 @@ function RichTextField({ value, onChange, placeholder, minHeight = 90, inline = 
 
   return (
     <div className={`btc-rte${inline ? " btc-rte-inline" : ""}`} ref={wrapRef}>
-      {!inline && (
-        <div className="btc-rte-toolbar">
-        <button type="button" className="btc-rte-btn" title="Bold" onMouseDown={(e) => e.preventDefault()} onClick={() => exec("bold")}>
-          <Bold size={13} />
-        </button>
-        <button type="button" className="btc-rte-btn" title="Italic" onMouseDown={(e) => e.preventDefault()} onClick={() => exec("italic")}>
-          <Italic size={13} />
-        </button>
-        <button
-          type="button"
-          className="btc-rte-btn"
-          title="Underline"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => exec("underline")}
-        >
-          <Underline size={13} />
-        </button>
-        <span className="btc-rte-sep" />
-        <button
-          type="button"
-          className="btc-rte-btn"
-          title="Bulleted list"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => exec("insertUnorderedList")}
-        >
-          <List size={13} />
-        </button>
-        <button
-          type="button"
-          className="btc-rte-btn"
-          title="Numbered list"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => exec("insertOrderedList")}
-        >
-          <ListOrdered size={13} />
-        </button>
-        <span className="btc-rte-sep" />
-        <button
-          type="button"
-          className="btc-rte-btn"
-          title="Decrease indent"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => execIndent("out")}
-        >
-          <IndentIcon size={13} dir="out" />
-        </button>
-        <button
-          type="button"
-          className="btc-rte-btn"
-          title="Increase indent"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => execIndent("in")}
-        >
-          <IndentIcon size={13} dir="in" />
-        </button>
-        <span className="btc-rte-sep" />
-        <button
-          type="button"
-          className="btc-rte-btn"
-          title="Add link (select text first, or right-click a link to edit it)"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={openAddLink}
-        >
-          <Link size={13} />
-        </button>
-        <select
-          className="btc-rte-select"
-          defaultValue=""
-          title="Font size"
-          onMouseDown={(e) => e.stopPropagation()}
-          onChange={(e) => {
-            if (e.target.value) exec("fontSize", e.target.value);
-            e.target.value = "";
-          }}
-        >
-          <option value="" disabled>
-            Size
-          </option>
-          {RTE_FONT_SIZES.map((s) => (
-            <option key={s.value} value={s.value}>
-              {s.label}
-            </option>
-          ))}
-        </select>
-        <label className="btc-rte-color" title="Text colour">
-          <Palette size={13} />
-          <input type="color" onMouseDown={(e) => e.stopPropagation()} onChange={(e) => exec("foreColor", e.target.value)} />
-        </label>
-        <label className="btc-rte-color" title="Highlight colour">
-          <Highlighter size={13} />
-          <input type="color" onMouseDown={(e) => e.stopPropagation()} onChange={(e) => exec("hiliteColor", e.target.value)} />
-        </label>
-        </div>
-      )}
       <div
         ref={ref}
         className={`btc-rte-content${inline ? " btc-rte-content-inline" : ""}`}
@@ -2001,7 +1957,195 @@ function RichTextField({ value, onChange, placeholder, minHeight = 90, inline = 
 }
 
 /* ------------------------------------------------------------------ */
-/*  Case brief card                                                     */
+/*  Global formatting toolbar                                          */
+/* ------------------------------------------------------------------ */
+
+// One shared toolbar for every text field in the app, instead of a toolbar
+// embedded in each one. document.execCommand operates on whatever selection
+// is currently live in the browser — not on any particular component — so as
+// long as clicking a toolbar button doesn't steal focus away from the field
+// being edited (via onMouseDown preventDefault, same trick used everywhere
+// else in this file), the command applies to whichever field the user was
+// just typing in, wherever it is on the page.
+function GlobalFormatToolbar({ open, onClose }) {
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkInput, setLinkInput] = useState("");
+  const savedRangeRef = useRef(null);
+  const [paintFormat, setPaintFormat] = useState(null);
+  const [painting, setPainting] = useState(false);
+
+  useEffect(() => {
+    if (!painting) return;
+    const onMouseUp = () => {
+      const sel = window.getSelection();
+      if (sel && sel.toString().trim() && paintFormat) {
+        const applyBool = (queryCmd, execCmd, want) => {
+          const has = document.queryCommandState(queryCmd);
+          if (want !== has) document.execCommand(execCmd);
+        };
+        applyBool("bold", "bold", paintFormat.bold);
+        applyBool("italic", "italic", paintFormat.italic);
+        applyBool("underline", "underline", paintFormat.underline);
+        if (paintFormat.foreColor) document.execCommand("foreColor", false, paintFormat.foreColor);
+        if (paintFormat.hiliteColor) document.execCommand("hiliteColor", false, paintFormat.hiliteColor);
+        if (paintFormat.fontSize) document.execCommand("fontSize", false, paintFormat.fontSize);
+      }
+      setPainting(false);
+      document.body.classList.remove("btc-painting-cursor");
+    };
+    document.addEventListener("mouseup", onMouseUp);
+    return () => document.removeEventListener("mouseup", onMouseUp);
+  }, [painting, paintFormat]);
+
+  if (!open) return null;
+
+  const exec = (cmd, arg) => document.execCommand(cmd, false, arg);
+  const execIndentGlobal = (direction) => document.execCommand(direction === "in" ? "indent" : "outdent");
+
+  const saveSelection = () => {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) savedRangeRef.current = sel.getRangeAt(0).cloneRange();
+  };
+  const restoreSelection = () => {
+    const sel = window.getSelection();
+    if (sel && savedRangeRef.current) {
+      sel.removeAllRanges();
+      sel.addRange(savedRangeRef.current);
+    }
+  };
+  const normalizeUrl = (url) => {
+    const trimmed = url.trim();
+    if (!trimmed) return "";
+    if (/^(https?:|mailto:|tel:)/i.test(trimmed)) return trimmed;
+    return `https://${trimmed}`;
+  };
+  const openLink = () => {
+    const sel = window.getSelection();
+    if (!sel || !sel.toString().trim()) return;
+    saveSelection();
+    setLinkInput("");
+    setLinkOpen(true);
+  };
+  const applyLink = () => {
+    restoreSelection();
+    const url = normalizeUrl(linkInput);
+    if (url) document.execCommand("createLink", false, url);
+    setLinkOpen(false);
+  };
+
+  const copyFormat = () => {
+    setPaintFormat({
+      bold: document.queryCommandState("bold"),
+      italic: document.queryCommandState("italic"),
+      underline: document.queryCommandState("underline"),
+      foreColor: document.queryCommandValue("foreColor"),
+      hiliteColor: document.queryCommandValue("hiliteColor") || document.queryCommandValue("backColor"),
+      fontSize: document.queryCommandValue("fontSize"),
+    });
+    setPainting(true);
+    document.body.classList.add("btc-painting-cursor");
+  };
+
+  const stop = (e) => e.preventDefault();
+
+  return (
+    <div className="btc-global-toolbar">
+      <div className="btc-global-toolbar-head">
+        <span>Formatting</span>
+        <button className="btc-icon-btn small" onClick={onClose} title="Close">
+          <X size={13} />
+        </button>
+      </div>
+      <div className="btc-global-toolbar-grid">
+        <button className="btc-rte-btn" title="Bold (⌘B)" onMouseDown={stop} onClick={() => exec("bold")}>
+          <Bold size={14} />
+        </button>
+        <button className="btc-rte-btn" title="Italic (⌘I)" onMouseDown={stop} onClick={() => exec("italic")}>
+          <Italic size={14} />
+        </button>
+        <button className="btc-rte-btn" title="Underline (⌘U)" onMouseDown={stop} onClick={() => exec("underline")}>
+          <Underline size={14} />
+        </button>
+        <button
+          className={`btc-rte-btn${painting ? " active" : ""}`}
+          title="Format painter — copies the current selection's formatting, then applies it to the next text you select"
+          onMouseDown={stop}
+          onClick={copyFormat}
+        >
+          <Paintbrush size={14} />
+        </button>
+        <button className="btc-rte-btn" title="Bulleted list" onMouseDown={stop} onClick={() => exec("insertUnorderedList")}>
+          <List size={14} />
+        </button>
+        <button className="btc-rte-btn" title="Numbered list" onMouseDown={stop} onClick={() => exec("insertOrderedList")}>
+          <ListOrdered size={14} />
+        </button>
+        <button className="btc-rte-btn" title="Decrease indent (⌘[)" onMouseDown={stop} onClick={() => execIndentGlobal("out")}>
+          <IndentIcon size={14} dir="out" />
+        </button>
+        <button className="btc-rte-btn" title="Increase indent (⌘])" onMouseDown={stop} onClick={() => execIndentGlobal("in")}>
+          <IndentIcon size={14} dir="in" />
+        </button>
+        <button
+          className="btc-rte-btn"
+          title="Add link (select text first, or ⌘K)"
+          onMouseDown={stop}
+          onClick={openLink}
+        >
+          <Link size={14} />
+        </button>
+        <label className="btc-rte-color" title="Text colour" onMouseDown={stop}>
+          <Palette size={14} />
+          <input type="color" onChange={(e) => exec("foreColor", e.target.value)} />
+        </label>
+        <label className="btc-rte-color" title="Highlight colour" onMouseDown={stop}>
+          <Highlighter size={14} />
+          <input type="color" onChange={(e) => exec("hiliteColor", e.target.value)} />
+        </label>
+        <select
+          className="btc-rte-select"
+          defaultValue=""
+          title="Font size"
+          onMouseDown={stop}
+          onChange={(e) => {
+            if (e.target.value) exec("fontSize", e.target.value);
+            e.target.value = "";
+          }}
+        >
+          <option value="" disabled>
+            Size
+          </option>
+          {RTE_FONT_SIZES.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      {linkOpen && (
+        <div className="btc-global-toolbar-link">
+          <input
+            className="btc-rte-link-input"
+            autoFocus
+            placeholder="https://example.com"
+            value={linkInput}
+            onChange={(e) => setLinkInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") applyLink();
+              if (e.key === "Escape") setLinkOpen(false);
+            }}
+          />
+          <button className="btc-btn btc-btn-primary small" onClick={applyLink}>
+            Add
+          </button>
+        </div>
+      )}
+      {painting && <div className="btc-global-toolbar-hint">Now select text anywhere to apply the copied formatting.</div>}
+    </div>
+  );
+}
+
+
 /* ------------------------------------------------------------------ */
 
 function NoteActions({ onOutline, onPrewrite, onDelete }) {
@@ -4251,6 +4395,19 @@ export default function BeatTheCurve() {
     } catch (e) {}
   }, [sidebarCollapsed]);
 
+  const [formatToolbarOpen, setFormatToolbarOpen] = useState(() => {
+    try {
+      return localStorage.getItem(FORMAT_TOOLBAR_OPEN_KEY) === "1";
+    } catch (e) {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(FORMAT_TOOLBAR_OPEN_KEY, formatToolbarOpen ? "1" : "0");
+    } catch (e) {}
+  }, [formatToolbarOpen]);
+
   // Same idea as dark mode: a display preference, not course content.
   // The note/outline/prewrite panels share this one adjustable width, dragged
   // via the handle at the pane's right edge (see ResizablePane below).
@@ -4943,6 +5100,13 @@ export default function BeatTheCurve() {
             </button>
           )}
           <button
+            className={`btc-btn btc-btn-outline small${formatToolbarOpen ? " active" : ""}`}
+            onClick={() => setFormatToolbarOpen((v) => !v)}
+            title={formatToolbarOpen ? "Hide formatting toolbar" : "Show formatting toolbar"}
+          >
+            <Bold size={14} />
+          </button>
+          <button
             className="btc-btn btc-btn-outline small"
             onClick={() => setDarkMode((v) => !v)}
             title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
@@ -5102,6 +5266,7 @@ export default function BeatTheCurve() {
           signOutGoogle();
         }}
       />
+      <GlobalFormatToolbar open={formatToolbarOpen} onClose={() => setFormatToolbarOpen(false)} />
       {currentCourse && showOutlineModal && (
         <CourseDocModal
           title={`${currentCourse.name} — Course Outline`}
@@ -5919,18 +6084,40 @@ function BaseStyles() {
         border: 1px solid var(--rule-strong); border-radius: 2px;
         background: var(--paper-raised);
       }
-      .btc-rte-toolbar {
-        display: flex; flex-wrap: nowrap; align-items: center; gap: 2px;
-        padding: 5px 6px; border-bottom: 1px solid var(--rule);
-        background: var(--rule); overflow-x: auto;
-      }
       .btc-rte-btn {
         display: inline-flex; align-items: center; justify-content: center;
         width: 26px; height: 24px; flex-shrink: 0;
         background: none; border: 1px solid transparent; border-radius: 2px;
         color: var(--ink-soft);
       }
-      .btc-rte-btn:hover { background: var(--paper-raised); border-color: var(--rule-strong); }
+      .btc-rte-btn:hover { background: var(--paper); border-color: var(--rule-strong); }
+      .btc-rte-btn.active { background: var(--spine); color: #F5F0E1; border-color: var(--spine); }
+
+      /* ---------- Global formatting toolbar ---------- */
+      .btc-global-toolbar {
+        position: fixed; top: 110px; right: 18px; z-index: 90;
+        background: var(--paper-raised); border: 1px solid var(--rule-strong); border-radius: 6px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.14); padding: 8px; width: 176px;
+      }
+      .btc-global-toolbar-head {
+        display: flex; align-items: center; justify-content: space-between;
+        font-family: 'Inter', sans-serif; font-size: 0.72rem; color: var(--muted);
+        text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; padding: 0 2px;
+      }
+      .btc-global-toolbar-grid {
+        display: flex; flex-wrap: wrap; gap: 3px;
+      }
+      .btc-global-toolbar-grid .btc-rte-select { max-width: 100%; flex: 1 1 100%; }
+      .btc-global-toolbar-link {
+        display: flex; gap: 4px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--rule);
+      }
+      .btc-global-toolbar-link .btc-rte-link-input { flex: 1; min-width: 0; }
+      .btc-global-toolbar-hint {
+        font-family: 'Inter', sans-serif; font-size: 0.7rem; color: var(--muted);
+        margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--rule); line-height: 1.4;
+      }
+      body.btc-painting-cursor, body.btc-painting-cursor * { cursor: copy !important; }
+
       .btc-rte-sep {
         width: 1px; height: 18px; background: var(--rule-strong); margin: 0 3px; flex-shrink: 0;
       }
