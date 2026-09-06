@@ -4085,7 +4085,11 @@ export default function BeatTheCurve() {
           console.error("Supabase fetch error:", error.message);
           showToast("Couldn't load your synced notes — check the console for details");
         } else if (row?.NoteBook) {
-          setData(hydrateData(row.NoteBook));
+          const hydrated = hydrateData(row.NoteBook);
+          setData(hydrated);
+          if (hydrated.courses.length) {
+            setNav((n) => ({ ...n, courseId: n.courseId || hydrated.courses[0].id }));
+          }
         }
       } catch (e) {
         console.error("Supabase fetch error:", e);
