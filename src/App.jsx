@@ -1071,13 +1071,30 @@ async function driveUpdateDoc(fileId, html) {
   await driveMediaUpdate(fileId, "text/html", html);
 }
 
-// Full sync pass: ensures "Beat the Curve" > "<Course>" > "Week N" docs all exist
-// and are current, plus a JSON backup file for reliable full-fidelity restore.
-// Every step is individually try/caught so one failing item (e.g. a single week's
-// Doc upload) can't abort the rest of the sync — previously a single throw here
-// would abandon the whole pass mid-loop, which is why a course folder could end
-// up created with no week docs inside it. Returns { map, hadError } so the caller
-// can persist whatever succeeded and still surface that something needs retrying.
+async function driveDeleteFile(fileId) {
+  return window.gapi.client.drive.files.delete({ fileId });
+}
+
+// All of a course's weeks (that have content) combined into one block list,
+// with a page-break marker between each — this is what becomes the single
+// per-course Google Doc, instead of a separate Doc per week.
+function courseWeeksToBlocks(course) {
+  const weeksWithContent = course.weeks.filter(weekHasContent);
+  const blocks = [];
+  weeksWithContent.forEach((w, i) => {
+    if (i > 0) blocks.push({ type: "pagebreak" });
+    blocks.push(...weekToBlocks(w));
+  });
+  return { blocks, hasContent: weeksWithContent.length > 0 };
+}
+
+// Full sync pass: ensures "Beat the Curve" > "<Course>" folders exist, each
+// holding one combined Google Doc for that course (all weeks, page-broken),
+// plus a JSON backup file for reliable full-fidelity restore.
+// Every step is individually try/caught so one failing item can't abort the
+// rest of the sync — a course folder can end up with a stale/missing doc that
+// retries next cycle, rather than the whole pass aborting. Returns
+// { map, hadError } so the caller can persist whatever succeeded.
 async function runDriveSync(data, mapIn) {
   const map = { ...mapIn, courses: { ...mapIn.courses } };
   let hadError = false;
@@ -1108,7 +1125,7 @@ async function runDriveSync(data, mapIn) {
   }
 
   for (const course of data.courses) {
-    const existing = map.courses[course.id] || { folderId: null, weeks: {} };
+    const existing = map.courses[course.id] || { folderId: null, docId: null };
     let folderId;
     try {
       folderId = await ensureFolder(existing.folderId, course.name, map.rootFolderId);
@@ -1117,25 +1134,38 @@ async function runDriveSync(data, mapIn) {
       map.courses[course.id] = existing;
       continue;
     }
-    const weeks = { ...existing.weeks };
 
-    for (const week of course.weeks) {
-      if (!weekHasContent(week)) continue;
+    let docId = existing.docId || null;
+    const { blocks: weekBlocks, hasContent } = courseWeeksToBlocks(course);
+
+    if (hasContent) {
       try {
-        const docName = weekLabel(week);
-        const html = buildSimpleHtmlDoc(`${course.name} — ${docName}`, blocksToHtml(weekToBlocks(week)));
-        const cachedDocId = weeks[week.weekNum];
-        if (cachedDocId && (await driveItemExists(cachedDocId))) {
-          await driveUpdateDoc(cachedDocId, html);
+        const html = buildSimpleHtmlDoc(`${course.name} — Notes`, blocksToHtml(weekBlocks));
+        if (docId && (await driveItemExists(docId))) {
+          await driveUpdateDoc(docId, html);
         } else {
-          weeks[week.weekNum] = await driveCreateDoc(docName, folderId, html);
+          docId = await driveCreateDoc(`${course.name} — Notes`, folderId, html);
         }
       } catch (e) {
         hadError = true;
       }
     }
 
-    map.courses[course.id] = { folderId, weeks };
+    // One-time cleanup: earlier versions created a separate Doc per week —
+    // once the combined doc above is in place, remove those leftovers so the
+    // course folder doesn't end up with duplicates.
+    if (existing.weeks) {
+      for (const oldId of Object.values(existing.weeks)) {
+        if (!oldId) continue;
+        try {
+          await driveDeleteFile(oldId);
+        } catch (e) {
+          // Not fatal — worst case an old per-week doc lingers for manual cleanup.
+        }
+      }
+    }
+
+    map.courses[course.id] = { folderId, docId };
   }
 
   return { map, hadError };
@@ -3556,7 +3586,7 @@ export default function BeatTheCurve() {
               onDelete={requestDeleteCourse}
             />
             <DownloadMenu
-              label="Download course"
+              label="Download full course (Weeks 1–12)"
               baseName={`${currentCourse.name} — Full Course`}
               buildBlocks={() => courseToBlocks(currentCourse)}
               showToast={showToast}
