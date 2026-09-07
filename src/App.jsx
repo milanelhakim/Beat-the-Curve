@@ -5067,21 +5067,50 @@ export default function BeatTheCurve() {
 
   /* ---- Supabase auth: restore/track the session, and mirror the Google
      access token into the Drive helpers whenever it changes.
-     Note: Supabase only includes provider_token on the initial OAuth
-     redirect — it is not refreshed automatically, so Drive access will need
-     a fresh sign-in after the Google token expires (~1 hour) or after the
-     page is reloaded well after signing in. There's no purely client-side
-     way around this without a server-side token refresh step. */
+     Supabase only includes provider_token on the initial OAuth redirect —
+     a plain page reload (or opening the app after the ~1hr Google token
+     expiry) restores a session with no provider_token at all, which is
+     exactly what was leaving Drive silently disconnected until the user
+     manually signed out and back in. This now recovers automatically: try
+     an explicit session refresh first (access_type=offline on sign-in means
+     Supabase's backend may hold a Google refresh token and can mint a fresh
+     one without any visible interaction), and if that's not enough,
+     immediately kick off reconnection via signInWithGoogleDrive() itself —
+     since that call no longer forces Google's consent screen, this
+     typically completes as a near-instant redirect for a user who has
+     already granted access, with no manual sign-out/sign-in needed. */
   useEffect(() => {
     let mounted = true;
+
+    const ensureDriveConnected = async (current) => {
+      if (!current?.user) return;
+      if (current.provider_token) {
+        setDriveAccessToken(current.provider_token);
+        setDriveStatus("connected");
+        return;
+      }
+      setDriveStatus("connecting");
+      try {
+        const { data } = await supabase.auth.refreshSession();
+        if (!mounted) return;
+        if (data?.session?.provider_token) {
+          setDriveAccessToken(data.session.provider_token);
+          setDriveStatus("connected");
+          return;
+        }
+      } catch (e) {
+        // fall through to the reconnect below
+      }
+      if (!mounted) return;
+      const { error } = await signInWithGoogleDrive();
+      if (error && mounted) setDriveStatus("disconnected");
+    };
+
     supabase.auth.getSession().then(({ data: { session: current } }) => {
       if (!mounted) return;
       setSession(current);
       setAuthLoading(false);
-      if (current?.provider_token) {
-        setDriveAccessToken(current.provider_token);
-        setDriveStatus("connected");
-      }
+      ensureDriveConnected(current);
     });
     const { data: listener } = supabase.auth.onAuthStateChange((_event, next) => {
       setSession(next);
@@ -5793,6 +5822,7 @@ export default function BeatTheCurve() {
                 )}
               </ResizablePane>
             </main>
+            <GlobalFormatToolbar open={formatToolbarOpen} onToggle={() => setFormatToolbarOpen((v) => !v)} />
           </div>
           </div>
         </div>
@@ -5813,7 +5843,6 @@ export default function BeatTheCurve() {
           signOutGoogle();
         }}
       />
-      <GlobalFormatToolbar open={formatToolbarOpen} onToggle={() => setFormatToolbarOpen((v) => !v)} />
       {currentCourse && showOutlineModal && (
         <CourseDocModal
           title={`${currentCourse.name} — Course Outline`}
@@ -6049,7 +6078,7 @@ function BaseStyles() {
       /* ---------- Body / layout ---------- */
       .btc-zoom-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; }
       .btc-body { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-      .btc-layout { flex: 1; display: flex; min-height: 0; }
+      .btc-layout { flex: 1; display: flex; min-height: 0; position: relative; }
 
       .btc-sidebar {
         width: 216px; flex-shrink: 0;
@@ -6615,6 +6644,9 @@ function BaseStyles() {
         letter-spacing: -0.01em; line-height: 1.3;
       }
       .btc-course-card-meta { font-family: 'Inter', sans-serif; font-size: 0.8rem; color: var(--muted); }
+      .btc-course-card .btc-deadline-chip {
+        white-space: normal; align-self: stretch; max-width: 100%; box-sizing: border-box;
+      }
       .btc-course-card-new { border-style: dashed; gap: 10px; }
       .btc-course-card-new .btc-input { width: 100%; }
 
@@ -6657,7 +6689,7 @@ function BaseStyles() {
 
       /* ---------- Global formatting toolbar (right-side rail) ---------- */
       .btc-format-rail {
-        position: fixed; top: 62px; right: 0; bottom: 0; z-index: 90; width: 240px;
+        position: absolute; top: 0; right: 0; bottom: 0; z-index: 90; width: 240px;
         background: var(--paper-raised); border-left: 1px solid var(--rule);
         box-shadow: -6px 0 18px rgba(0,0,0,0.06);
         display: flex; flex-direction: column;
