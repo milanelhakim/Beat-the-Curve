@@ -930,6 +930,7 @@ function loadDocxLib() {
 
 function blocksToDocxParagraphs(docxLib, blocks) {
   const { Paragraph, TextRun, HeadingLevel, PageBreak } = docxLib;
+  const FONT = "Georgia";
   const paragraphs = [];
   blocks.forEach((b) => {
     if (b.type === "space") {
@@ -943,27 +944,43 @@ function blocksToDocxParagraphs(docxLib, blocks) {
     const cleanText = (b.text || "").replace(/\*\*/g, "").replace(/`/g, "");
     if (b.type === "h1") {
       paragraphs.push(
-        new Paragraph({ text: cleanText, heading: HeadingLevel.HEADING_1, spacing: { before: 240, after: 120 } })
+        new Paragraph({
+          children: [new TextRun({ text: cleanText, font: FONT, bold: true, size: 32 })],
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 240, after: 120 },
+        })
       );
     } else if (b.type === "h2") {
       paragraphs.push(
-        new Paragraph({ text: cleanText, heading: HeadingLevel.HEADING_2, spacing: { before: 200, after: 100 } })
+        new Paragraph({
+          children: [new TextRun({ text: cleanText, font: FONT, bold: true, size: 28 })],
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 200, after: 100 },
+        })
       );
     } else if (b.type === "h3") {
       paragraphs.push(
-        new Paragraph({ text: cleanText, heading: HeadingLevel.HEADING_3, spacing: { before: 160, after: 80 } })
+        new Paragraph({
+          children: [new TextRun({ text: cleanText, font: FONT, bold: true, size: 24 })],
+          heading: HeadingLevel.HEADING_3,
+          spacing: { before: 160, after: 80 },
+        })
       );
     } else if (b.type === "h4") {
       paragraphs.push(
         new Paragraph({
-          children: [new TextRun({ text: cleanText, bold: true })],
+          children: [new TextRun({ text: cleanText, font: FONT, bold: true })],
           spacing: { before: 120, after: 60 },
         })
       );
     } else if (b.type === "li") {
-      paragraphs.push(new Paragraph({ text: cleanText, bullet: { level: 0 } }));
+      paragraphs.push(
+        new Paragraph({ children: [new TextRun({ text: cleanText, font: FONT })], bullet: { level: 0 } })
+      );
     } else {
-      paragraphs.push(new Paragraph({ text: cleanText, spacing: { after: 80 } }));
+      paragraphs.push(
+        new Paragraph({ children: [new TextRun({ text: cleanText, font: FONT })], spacing: { after: 80 } })
+      );
     }
   });
   return paragraphs;
@@ -971,9 +988,13 @@ function blocksToDocxParagraphs(docxLib, blocks) {
 
 async function blocksToDocxAndSave(blocks, title, filename) {
   const docxLib = await loadDocxLib();
-  const { Document, Packer, Paragraph, HeadingLevel } = docxLib;
+  const { Document, Packer, Paragraph, TextRun, HeadingLevel } = docxLib;
   const paragraphs = [
-    new Paragraph({ text: title, heading: HeadingLevel.TITLE, spacing: { after: 240 } }),
+    new Paragraph({
+      children: [new TextRun({ text: title, font: "Georgia", bold: true, size: 36 })],
+      heading: HeadingLevel.TITLE,
+      spacing: { after: 240 },
+    }),
     ...blocksToDocxParagraphs(docxLib, blocks),
   ];
   const doc = new Document({
