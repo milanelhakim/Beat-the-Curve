@@ -444,6 +444,8 @@ function htmlToPlainText(html) {
 // Converts stored rich-text HTML into the same {type,text} block model used
 // for exports, so headings/bullets a student typed with the toolbar survive
 // into Word/PDF/Drive Doc output.
+const HTML_BLOCK_TAGS = new Set(["P", "DIV", "LI", "H1", "H2", "H3", "H4", "H5", "H6", "UL", "OL", "BLOCKQUOTE"]);
+
 function htmlToBlocks(html) {
   if (!html || htmlIsBlank(html)) return [{ type: "p", text: "Nothing written yet." }];
   const container = document.createElement("div");
@@ -453,6 +455,16 @@ function htmlToBlocks(html) {
     const t = (text || "").replace(/\s+/g, " ").trim();
     if (t) blocks.push({ type, text: t });
   };
+  // True if any descendant (not just direct children) is a real block-level
+  // element. This is the key check: an element with no nested blocks is safe
+  // to flatten via .textContent (it's just inline formatting like <b>/<span>
+  // around plain text) — but one that DOES contain nested blocks must be
+  // recursed into, or those inner paragraph/list boundaries get silently
+  // erased. Pasted PDF content is notorious for wrapping whole multi-paragraph
+  // sections in a single <span>, which is exactly what was breaking here.
+  const containsBlock = (el) =>
+    !!el.querySelectorAll && [...el.querySelectorAll("*")].some((c) => HTML_BLOCK_TAGS.has(c.tagName));
+
   const walk = (node) => {
     node.childNodes.forEach((child) => {
       if (child.nodeType === 3) {
@@ -460,14 +472,39 @@ function htmlToBlocks(html) {
         return;
       }
       if (child.nodeType !== 1) return;
-      const tag = child.tagName.toLowerCase();
-      if (tag === "h1" || tag === "h2") pushText("h3", child.textContent);
-      else if (tag === "h3" || tag === "h4") pushText("h4", child.textContent);
-      else if (tag === "ul" || tag === "ol") {
-        child.querySelectorAll("li").forEach((li) => pushText("li", li.textContent));
-      } else if (tag === "li") pushText("li", child.textContent);
-      else if (tag === "p" || tag === "div") pushText("p", child.textContent);
-      else pushText("p", child.textContent);
+      const tag = child.tagName;
+      if (tag === "BR") return;
+
+      if (tag === "UL" || tag === "OL") {
+        [...child.children].forEach((li) => {
+          if (li.tagName !== "LI") return;
+          if (containsBlock(li)) walk(li);
+          else pushText("li", li.textContent);
+        });
+        return;
+      }
+      if (tag === "LI") {
+        if (containsBlock(child)) walk(child);
+        else pushText("li", child.textContent);
+        return;
+      }
+      if (tag === "H1" || tag === "H2") {
+        pushText("h3", child.textContent);
+        return;
+      }
+      if (tag === "H3" || tag === "H4" || tag === "H5" || tag === "H6") {
+        pushText("h4", child.textContent);
+        return;
+      }
+      // P, DIV, BLOCKQUOTE, or any other wrapper (SPAN, B, FONT, A, ...): if it
+      // has no nested block elements, its whole text content is safely one
+      // paragraph. If it DOES contain nested blocks, recurse to find them
+      // instead of flattening them together.
+      if (containsBlock(child)) {
+        walk(child);
+      } else {
+        pushText("p", child.textContent);
+      }
     });
   };
   walk(container);
