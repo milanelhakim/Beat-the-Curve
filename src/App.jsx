@@ -441,34 +441,86 @@ function htmlToPlainText(html) {
   return (container.textContent || "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-// Converts stored rich-text HTML into the same {type,text} block model used
-// for exports, so headings/bullets a student typed with the toolbar survive
-// into Word/PDF/Drive Doc output.
+// Converts stored rich-text HTML into the block model used for exports, so
+// headings/bullets/bold/italic a student typed survive into Word/PDF/Drive
+// Doc output. Each block carries `runs` — an array of {text, bold, italic,
+// underline} — so formatting *within* a paragraph (e.g. a bolded label like
+// "Absolute Objectivity (Realism):") isn't lost the way a single flat string
+// per block would lose it. `text` is also populated (the runs joined plainly)
+// so any older code that only reads block.text keeps working unchanged.
 const HTML_BLOCK_TAGS = new Set(["P", "DIV", "LI", "H1", "H2", "H3", "H4", "H5", "H6", "UL", "OL", "BLOCKQUOTE"]);
 
+function extractRuns(el) {
+  const runs = [];
+  const walkInline = (node, fmt) => {
+    node.childNodes.forEach((child) => {
+      if (child.nodeType === 3) {
+        if (child.textContent) runs.push({ text: child.textContent, ...fmt });
+        return;
+      }
+      if (child.nodeType !== 1) return;
+      const tag = child.tagName;
+      if (tag === "BR") {
+        runs.push({ text: " ", ...fmt });
+        return;
+      }
+      const next = { ...fmt };
+      if (tag === "B" || tag === "STRONG") next.bold = true;
+      if (tag === "I" || tag === "EM") next.italic = true;
+      if (tag === "U") next.underline = true;
+      walkInline(child, next);
+    });
+  };
+  walkInline(el, { bold: false, italic: false, underline: false });
+  return runs;
+}
+
+function normalizeRuns(runs) {
+  // Collapse whitespace within each run the same way the old plain-text path
+  // did, drop empty runs, and merge adjacent runs that ended up with
+  // identical formatting (e.g. two text nodes split by a stray empty tag).
+  const cleaned = runs
+    .map((r) => ({ ...r, text: r.text.replace(/\s+/g, " ") }))
+    .filter((r) => r.text.trim().length > 0 || r.text === " ");
+  const merged = [];
+  cleaned.forEach((r) => {
+    const prev = merged[merged.length - 1];
+    if (prev && prev.bold === r.bold && prev.italic === r.italic && prev.underline === r.underline) {
+      prev.text += r.text;
+    } else {
+      merged.push({ ...r });
+    }
+  });
+  if (merged.length) merged[0].text = merged[0].text.replace(/^\s+/, "");
+  if (merged.length) merged[merged.length - 1].text = merged[merged.length - 1].text.replace(/\s+$/, "");
+  return merged.filter((r) => r.text.length > 0);
+}
+
 function htmlToBlocks(html) {
-  if (!html || htmlIsBlank(html)) return [{ type: "p", text: "Nothing written yet." }];
+  if (!html || htmlIsBlank(html)) return [{ type: "p", text: "Nothing written yet.", runs: [{ text: "Nothing written yet." }] }];
   const container = document.createElement("div");
   container.innerHTML = html;
   const blocks = [];
-  const pushText = (type, text) => {
-    const t = (text || "").replace(/\s+/g, " ").trim();
-    if (t) blocks.push({ type, text: t });
+  const pushRuns = (type, el) => {
+    const runs = normalizeRuns(extractRuns(el));
+    const text = runs.map((r) => r.text).join("").trim();
+    if (text) blocks.push({ type, text, runs });
   };
   // True if any descendant (not just direct children) is a real block-level
   // element. This is the key check: an element with no nested blocks is safe
-  // to flatten via .textContent (it's just inline formatting like <b>/<span>
-  // around plain text) — but one that DOES contain nested blocks must be
-  // recursed into, or those inner paragraph/list boundaries get silently
-  // erased. Pasted PDF content is notorious for wrapping whole multi-paragraph
-  // sections in a single <span>, which is exactly what was breaking here.
+  // to flatten (it's just inline formatting like <b>/<span> around plain
+  // text) — but one that DOES contain nested blocks must be recursed into, or
+  // those inner paragraph/list boundaries get silently erased. Pasted PDF
+  // content is notorious for wrapping whole multi-paragraph sections in a
+  // single <span>, which is exactly what was breaking here.
   const containsBlock = (el) =>
     !!el.querySelectorAll && [...el.querySelectorAll("*")].some((c) => HTML_BLOCK_TAGS.has(c.tagName));
 
   const walk = (node) => {
     node.childNodes.forEach((child) => {
       if (child.nodeType === 3) {
-        pushText("p", child.textContent);
+        const t = child.textContent.replace(/\s+/g, " ").trim();
+        if (t) blocks.push({ type: "p", text: t, runs: [{ text: t }] });
         return;
       }
       if (child.nodeType !== 1) return;
@@ -479,31 +531,31 @@ function htmlToBlocks(html) {
         [...child.children].forEach((li) => {
           if (li.tagName !== "LI") return;
           if (containsBlock(li)) walk(li);
-          else pushText("li", li.textContent);
+          else pushRuns("li", li);
         });
         return;
       }
       if (tag === "LI") {
         if (containsBlock(child)) walk(child);
-        else pushText("li", child.textContent);
+        else pushRuns("li", child);
         return;
       }
       if (tag === "H1" || tag === "H2") {
-        pushText("h3", child.textContent);
+        pushRuns("h3", child);
         return;
       }
       if (tag === "H3" || tag === "H4" || tag === "H5" || tag === "H6") {
-        pushText("h4", child.textContent);
+        pushRuns("h4", child);
         return;
       }
       // P, DIV, BLOCKQUOTE, or any other wrapper (SPAN, B, FONT, A, ...): if it
-      // has no nested block elements, its whole text content is safely one
+      // has no nested block elements, its whole content is safely one
       // paragraph. If it DOES contain nested blocks, recurse to find them
       // instead of flattening them together.
       if (containsBlock(child)) {
         walk(child);
       } else {
-        pushText("p", child.textContent);
+        pushRuns("p", child);
       }
     });
   };
@@ -925,8 +977,22 @@ function courseToBlocks(course) {
   return blocks;
 }
 
+function runsToHtml(b) {
+  const runs = b.runs && b.runs.length ? b.runs : [{ text: b.text || "" }];
+  return runs
+    .map((r) => {
+      let t = escapeHtml(r.text);
+      if (r.bold) t = `<b>${t}</b>`;
+      if (r.italic) t = `<i>${t}</i>`;
+      if (r.underline) t = `<u>${t}</u>`;
+      return t;
+    })
+    .join("");
+}
+
 function blocksToHtml(blocks) {
   const FONT = `font-family:Arial,sans-serif`;
+  const PARA_STYLE = `${FONT};margin:0 0 10pt 0;`;
   let html = "";
   let inList = false;
   const closeList = () => {
@@ -938,10 +1004,10 @@ function blocksToHtml(blocks) {
   blocks.forEach((b) => {
     if (b.type === "li") {
       if (!inList) {
-        html += `<ul style="${FONT}">`;
+        html += `<ul style="${FONT}margin:0 0 10pt 0;">`;
         inList = true;
       }
-      html += `<li style="${FONT}">${escapeHtml(b.text)}</li>`;
+      html += `<li style="${FONT}">${runsToHtml(b)}</li>`;
       return;
     }
     closeList();
@@ -950,7 +1016,7 @@ function blocksToHtml(blocks) {
     } else if (b.type === "pagebreak") {
       html += `<div style="page-break-before:always"></div>`;
     } else {
-      html += `<${b.type} style="${FONT}">${escapeHtml(b.text)}</${b.type}>`;
+      html += `<${b.type} style="${PARA_STYLE}">${runsToHtml(b)}</${b.type}>`;
     }
   });
   closeList();
@@ -968,6 +1034,25 @@ function loadDocxLib() {
 function blocksToDocxParagraphs(docxLib, blocks) {
   const { Paragraph, TextRun, HeadingLevel, PageBreak } = docxLib;
   const FONT = "Arial";
+  const clean = (t) => (t || "").replace(/\*\*/g, "").replace(/`/g, "");
+  // Builds one TextRun per formatted run in the block (instead of one flat
+  // run for the whole paragraph), so a bolded label in the middle of a
+  // sentence — e.g. "Absolute Objectivity (Realism):" — actually renders
+  // bold in Word rather than being silently flattened to plain text.
+  const runsToTextRuns = (b, extra = {}) => {
+    const runs = b.runs && b.runs.length ? b.runs : [{ text: b.text || "" }];
+    return runs.map(
+      (r) =>
+        new TextRun({
+          text: clean(r.text),
+          font: FONT,
+          bold: extra.forceBold || !!r.bold,
+          italics: !!r.italic,
+          underline: r.underline ? {} : undefined,
+          size: extra.size,
+        })
+    );
+  };
   const paragraphs = [];
   blocks.forEach((b) => {
     if (b.type === "space") {
@@ -978,11 +1063,10 @@ function blocksToDocxParagraphs(docxLib, blocks) {
       paragraphs.push(new Paragraph({ children: [new PageBreak()] }));
       return;
     }
-    const cleanText = (b.text || "").replace(/\*\*/g, "").replace(/`/g, "");
     if (b.type === "h1") {
       paragraphs.push(
         new Paragraph({
-          children: [new TextRun({ text: cleanText, font: FONT, bold: true, size: 32 })],
+          children: runsToTextRuns(b, { forceBold: true, size: 32 }),
           heading: HeadingLevel.HEADING_1,
           spacing: { before: 240, after: 120 },
         })
@@ -990,7 +1074,7 @@ function blocksToDocxParagraphs(docxLib, blocks) {
     } else if (b.type === "h2") {
       paragraphs.push(
         new Paragraph({
-          children: [new TextRun({ text: cleanText, font: FONT, bold: true, size: 28 })],
+          children: runsToTextRuns(b, { forceBold: true, size: 28 }),
           heading: HeadingLevel.HEADING_2,
           spacing: { before: 200, after: 100 },
         })
@@ -998,7 +1082,7 @@ function blocksToDocxParagraphs(docxLib, blocks) {
     } else if (b.type === "h3") {
       paragraphs.push(
         new Paragraph({
-          children: [new TextRun({ text: cleanText, font: FONT, bold: true, size: 24 })],
+          children: runsToTextRuns(b, { forceBold: true, size: 24 }),
           heading: HeadingLevel.HEADING_3,
           spacing: { before: 160, after: 80 },
         })
@@ -1006,18 +1090,14 @@ function blocksToDocxParagraphs(docxLib, blocks) {
     } else if (b.type === "h4") {
       paragraphs.push(
         new Paragraph({
-          children: [new TextRun({ text: cleanText, font: FONT, bold: true })],
+          children: runsToTextRuns(b, { forceBold: true }),
           spacing: { before: 120, after: 60 },
         })
       );
     } else if (b.type === "li") {
-      paragraphs.push(
-        new Paragraph({ children: [new TextRun({ text: cleanText, font: FONT })], bullet: { level: 0 } })
-      );
+      paragraphs.push(new Paragraph({ children: runsToTextRuns(b), bullet: { level: 0 }, spacing: { after: 100 } }));
     } else {
-      paragraphs.push(
-        new Paragraph({ children: [new TextRun({ text: cleanText, font: FONT })], spacing: { after: 80 } })
-      );
+      paragraphs.push(new Paragraph({ children: runsToTextRuns(b), spacing: { after: 160 } }));
     }
   });
   return paragraphs;
