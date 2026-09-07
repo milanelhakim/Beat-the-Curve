@@ -889,7 +889,7 @@ function courseToBlocks(course) {
 }
 
 function blocksToHtml(blocks) {
-  const FONT = `font-family:Georgia,serif`;
+  const FONT = `font-family:Arial,sans-serif`;
   let html = "";
   let inList = false;
   const closeList = () => {
@@ -930,7 +930,7 @@ function loadDocxLib() {
 
 function blocksToDocxParagraphs(docxLib, blocks) {
   const { Paragraph, TextRun, HeadingLevel, PageBreak } = docxLib;
-  const FONT = "Georgia";
+  const FONT = "Arial";
   const paragraphs = [];
   blocks.forEach((b) => {
     if (b.type === "space") {
@@ -991,7 +991,7 @@ async function blocksToDocxAndSave(blocks, title, filename) {
   const { Document, Packer, Paragraph, TextRun, HeadingLevel } = docxLib;
   const paragraphs = [
     new Paragraph({
-      children: [new TextRun({ text: title, font: "Georgia", bold: true, size: 36 })],
+      children: [new TextRun({ text: title, font: "Arial", bold: true, size: 36 })],
       heading: HeadingLevel.TITLE,
       spacing: { after: 240 },
     }),
@@ -1000,7 +1000,7 @@ async function blocksToDocxAndSave(blocks, title, filename) {
   const doc = new Document({
     styles: {
       default: {
-        document: { run: { font: "Georgia" } },
+        document: { run: { font: "Arial" } },
       },
     },
     sections: [{ children: paragraphs }],
@@ -1247,7 +1247,7 @@ async function driveMoveToFolder(fileId, newParentId) {
 function buildSimpleHtmlDoc(title, bodyHtml) {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(
     title
-  )}</title><style>body,p,div,li,h1,h2,h3,h4{font-family:Georgia,serif;}</style></head><body style="font-family:Georgia,serif;">${bodyHtml}</body></html>`;
+  )}</title><style>body,p,div,li,h1,h2,h3,h4{font-family:Arial,sans-serif;}</style></head><body style="font-family:Arial,sans-serif;">${bodyHtml}</body></html>`;
 }
 
 // Drive converts uploaded HTML into a native Google Doc's content on create, and
@@ -1456,7 +1456,7 @@ async function blocksToPdfAndSave(blocks, filename) {
       prefix = "•  ";
       indent = 12;
     }
-    doc.setFont("times", fontStyle);
+    doc.setFont("helvetica", fontStyle);
     doc.setFontSize(fontSize);
     const cleanText = (prefix + (b.text || "")).replace(/\*\*/g, "").replace(/`/g, "");
     const lines = doc.splitTextToSize(cleanText, maxWidth - indent);
