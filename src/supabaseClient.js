@@ -40,7 +40,6 @@ export function signInWithGoogleDrive() {
     options: {
       scopes: "https://www.googleapis.com/auth/drive.file",
       access_type: "offline",
-      prompt: "consent",
       redirectTo: window.location.origin,
     },
   });
