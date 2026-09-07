@@ -884,7 +884,7 @@ function mdToBlocks(raw) {
 }
 
 function boldLabelBlock(text) {
-  return { type: "p", text, runs: [{ text, bold: true }] };
+  return { type: "p", text, runs: [{ text, bold: true }], isLabel: true };
 }
 
 function noteToBlocks(note, idx) {
@@ -1080,6 +1080,9 @@ function runsToHtml(b) {
 function blocksToHtml(blocks) {
   const FONT = `font-family:Arial,sans-serif`;
   const PARA_STYLE = `${FONT};margin:0 0 10pt 0;`;
+  const HEADING_STYLE = `${FONT};margin:16pt 0 4pt 0;`;
+  const LABEL_STYLE = `${FONT};margin:14pt 0 2pt 0;`;
+  const HEADING_TYPES = new Set(["h1", "h2", "h3", "h4"]);
   let html = "";
   let inList = false;
   const closeList = () => {
@@ -1103,7 +1106,10 @@ function blocksToHtml(blocks) {
     } else if (b.type === "pagebreak") {
       html += `<div style="page-break-before:always"></div>`;
     } else {
-      html += `<${b.type} style="${PARA_STYLE}">${runsToHtml(b)}</${b.type}>`;
+      let style = PARA_STYLE;
+      if (HEADING_TYPES.has(b.type)) style = HEADING_STYLE;
+      else if (b.isLabel) style = LABEL_STYLE;
+      html += `<${b.type} style="${style}">${runsToHtml(b)}</${b.type}>`;
     }
   });
   closeList();
@@ -1183,6 +1189,8 @@ function blocksToDocxParagraphs(docxLib, blocks) {
       );
     } else if (b.type === "li") {
       paragraphs.push(new Paragraph({ children: runsToTextRuns(b), bullet: { level: 0 }, spacing: { after: 100 } }));
+    } else if (b.isLabel) {
+      paragraphs.push(new Paragraph({ children: runsToTextRuns(b), spacing: { before: 200, after: 40 } }));
     } else {
       paragraphs.push(new Paragraph({ children: runsToTextRuns(b), spacing: { after: 160 } }));
     }
