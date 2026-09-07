@@ -213,6 +213,21 @@ function makeEvolutionNote() {
   };
 }
 
+function makeSupportingIdea() {
+  return { id: uid("idea"), label: "Supporting idea", content: "" };
+}
+
+function makeArticleSummary() {
+  return {
+    id: uid("note"),
+    type: "article",
+    title: "",
+    citation: "",
+    thesis: "",
+    ideas: [makeSupportingIdea()],
+  };
+}
+
 const NOTE_TYPE_INFO = [
   {
     type: "brief",
@@ -231,6 +246,12 @@ const NOTE_TYPE_INFO = [
     label: "Evolution of law",
     desc: "Track how a rule developed — current governing law up top, precedent history below.",
     make: makeEvolutionNote,
+  },
+  {
+    type: "article",
+    label: "Article summary",
+    desc: "Title and citation up top, the article's main thesis, then as many supporting ideas as you need.",
+    make: makeArticleSummary,
   },
 ];
 
@@ -272,9 +293,19 @@ function hydrateTimelineEntry(t) {
   };
 }
 
+function hydrateSupportingIdea(i) {
+  if (!i || typeof i !== "object") return makeSupportingIdea();
+  return {
+    id: i.id || uid("idea"),
+    label: typeof i.label === "string" && i.label.trim() ? i.label : "Supporting idea",
+    content: typeof i.content === "string" ? i.content : "",
+  };
+}
+
 function hydrateNote(n) {
   if (!n || typeof n !== "object") return makeCase();
-  const type = n.type === "concept" || n.type === "evolution" ? n.type : "brief";
+  const type =
+    n.type === "concept" || n.type === "evolution" || n.type === "article" ? n.type : "brief";
   if (type === "concept") {
     const cases = Array.isArray(n.cases) && n.cases.length ? n.cases.map(hydrateLinkedCase) : [makeLinkedCase()];
     return {
@@ -294,6 +325,18 @@ function hydrateNote(n) {
       title: typeof n.title === "string" ? n.title : "",
       currentRule: typeof n.currentRule === "string" ? n.currentRule : "",
       timeline,
+    };
+  }
+  if (type === "article") {
+    const ideas =
+      Array.isArray(n.ideas) && n.ideas.length ? n.ideas.map(hydrateSupportingIdea) : [makeSupportingIdea()];
+    return {
+      id: n.id || uid("note"),
+      type: "article",
+      title: typeof n.title === "string" ? n.title : "",
+      citation: typeof n.citation === "string" ? n.citation : "",
+      thesis: typeof n.thesis === "string" ? n.thesis : "",
+      ideas,
     };
   }
   return {
@@ -579,6 +622,11 @@ function noteHasContent(note) {
     );
     return own || tl;
   }
+  if (note.type === "article") {
+    const own = !htmlIsBlank(note.title) || !htmlIsBlank(note.citation) || !htmlIsBlank(note.thesis);
+    const ideas = (note.ideas || []).some((i) => !htmlIsBlank(i.content) || (i.label && i.label !== "Supporting idea"));
+    return own || ideas;
+  }
   // brief (default/legacy)
   const core = !htmlIsBlank(note.caseName) || !htmlIsBlank(note.citation);
   const rich = [note.facts, note.procHistory, note.issue, note.holding, note.reasoning].some(
@@ -629,6 +677,20 @@ function compileNoteContent(note) {
         const cite = t.citation ? ` (${t.citation})` : "";
         const year = t.year ? `${t.year} — ` : "";
         lines.push(`- ${year}**${t.caseName || "Untitled case"}${cite}**${t.development ? `: ${t.development}` : ""}`);
+      });
+    }
+    return lines.join("\n");
+  }
+  if (note.type === "article") {
+    const titleText = htmlIsBlank(note.title) ? "Untitled article" : htmlToPlainText(note.title);
+    const citeText = htmlIsBlank(note.citation) ? "" : htmlToPlainText(note.citation);
+    const lines = [`### Article: ${titleText}${citeText ? ` (${citeText})` : ""}`];
+    if (!htmlIsBlank(note.thesis)) lines.push(`**Main thesis:** ${htmlToPlainText(note.thesis)}`);
+    const ideas = (note.ideas || []).filter((i) => !htmlIsBlank(i.content));
+    if (ideas.length) {
+      lines.push("");
+      ideas.forEach((i) => {
+        lines.push(`- **${i.label || "Supporting idea"}:** ${htmlToPlainText(i.content)}`);
       });
     }
     return lines.join("\n");
@@ -696,6 +758,7 @@ function buildAuthoritiesList(note) {
       .map((t) => `- ${t.caseName}${t.citation ? ` (${t.citation})` : ""}${t.year ? ` — ${t.year}` : ""}`)
       .join("\n");
   }
+  if (note.type === "article") return ""; // an article isn't a case authority
   if (htmlIsBlank(note.caseName) && htmlIsBlank(note.citation)) return "";
   const nameText = htmlIsBlank(note.caseName) ? "Untitled case" : htmlToPlainText(note.caseName);
   const citeText = htmlIsBlank(note.citation) ? "" : htmlToPlainText(note.citation);
@@ -705,7 +768,14 @@ function buildAuthoritiesList(note) {
 function buildPrewriteFromNote(note) {
   const rawTitle = note.type === "brief" ? note.caseName : note.title;
   const title = htmlIsBlank(rawTitle) ? "Untitled attack outline" : htmlToPlainText(rawTitle);
-  const rawSeed = note.type === "brief" ? note.holding : note.type === "concept" ? note.summary : note.currentRule;
+  const rawSeed =
+    note.type === "brief"
+      ? note.holding
+      : note.type === "concept"
+      ? note.summary
+      : note.type === "article"
+      ? note.thesis
+      : note.currentRule;
   const ruleSeed = htmlIsBlank(rawSeed) ? "" : htmlToPlainText(rawSeed);
   const authorities = buildAuthoritiesList(note);
   const content = `## ${title}
@@ -850,6 +920,19 @@ function noteToBlocks(note, idx) {
         })
       );
     }
+  } else if (note.type === "article") {
+    const titleText = htmlIsBlank(note.title) ? "Untitled article" : htmlToPlainText(note.title);
+    const citeText = htmlIsBlank(note.citation) ? "" : htmlToPlainText(note.citation);
+    blocks.push({ type: "h4", text: `${idx}. Article: ${titleText}${citeText ? ` — ${citeText}` : ""}` });
+    if (!htmlIsBlank(note.thesis)) {
+      blocks.push({ type: "p", text: "Main thesis:" });
+      blocks.push(...htmlToBlocks(note.thesis));
+    }
+    (note.ideas || []).forEach((i) => {
+      if (htmlIsBlank(i.content)) return;
+      blocks.push({ type: "p", text: `${i.label || "Supporting idea"}:` });
+      blocks.push(...htmlToBlocks(i.content));
+    });
   } else {
     const name = htmlIsBlank(note.caseName) ? "Untitled case" : htmlToPlainText(note.caseName);
     const citeText = htmlIsBlank(note.citation) ? "" : htmlToPlainText(note.citation);
@@ -2916,6 +2999,89 @@ function EvolutionNoteCard({ index, data, onChange, onDelete, onOutline, onPrewr
   );
 }
 
+function ArticleSummaryCard({ index, data, onChange, onDelete, onOutline, onPrewrite, flashId, onDragStart, onDragEnd }) {
+  const isFlash = flashId === data.id;
+  const [collapsed, setCollapsed] = useState(false);
+
+  const updateIdea = (ideaId, next) =>
+    onChange({ ...data, ideas: data.ideas.map((i) => (i.id === ideaId ? next : i)) });
+  const addIdea = () => onChange({ ...data, ideas: [...data.ideas, makeSupportingIdea()] });
+  const removeIdea = (ideaId) => onChange({ ...data, ideas: data.ideas.filter((i) => i.id !== ideaId) });
+
+  return (
+    <div id={`note-${data.id}`} className={`btc-case-card${isFlash ? " btc-flash" : ""}`}>
+      <div className="btc-case-header">
+        <span className="btc-drag-handle" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} title="Drag to reorder">
+          <DragHandleIcon size={14} />
+        </span>
+        <button className="btc-fold-btn" onClick={() => setCollapsed((v) => !v)} title={collapsed ? "Expand" : "Collapse"}>
+          {collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+        </button>
+        <span className="btc-case-index">{String(index + 1).padStart(2, "0")}</span>
+        <div className="btc-case-title-wrap">
+          <span className="btc-note-badge article">Article summary</span>
+          <RichTextField
+            inline
+            placeholder="Article title"
+            value={data.title}
+            onChange={(html) => onChange({ ...data, title: html })}
+          />
+          <RichTextField
+            inline
+            placeholder="Citation (author, publication, year...)"
+            value={data.citation}
+            onChange={(html) => onChange({ ...data, citation: html })}
+          />
+        </div>
+        <NoteActions onOutline={onOutline} onPrewrite={onPrewrite} onDelete={onDelete} />
+      </div>
+
+      {!collapsed && (
+        <div className="btc-case-body">
+          <Field label="Main thesis">
+            <RichTextField
+              minHeight={64}
+              placeholder="The article's central argument..."
+              value={data.thesis}
+              onChange={(html) => onChange({ ...data, thesis: html })}
+            />
+          </Field>
+
+          {data.ideas.map((idea) => (
+            <div className="btc-idea-block" key={idea.id}>
+              <div className="btc-idea-head">
+                <input
+                  className="btc-idea-label-input"
+                  value={idea.label}
+                  onChange={(e) => updateIdea(idea.id, { ...idea, label: e.target.value })}
+                  placeholder="Supporting idea"
+                  title="Rename this supporting idea"
+                />
+                <button
+                  className="btc-icon-btn small"
+                  onClick={() => removeIdea(idea.id)}
+                  title="Remove this supporting idea"
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+              <RichTextField
+                minHeight={64}
+                placeholder="Explain this supporting idea..."
+                value={idea.content}
+                onChange={(html) => updateIdea(idea.id, { ...idea, content: html })}
+              />
+            </div>
+          ))}
+          <button className="btc-btn btc-btn-outline small" onClick={addIdea}>
+            <Plus size={13} /> Add supporting idea
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ReadingNoteCard({ index, note, onChange, onDelete, onOutline, onPrewrite, flashId, onDragStart, onDragEnd }) {
   if (note.type === "concept") {
     return (
@@ -2935,6 +3101,21 @@ function ReadingNoteCard({ index, note, onChange, onDelete, onOutline, onPrewrit
   if (note.type === "evolution") {
     return (
       <EvolutionNoteCard
+        index={index}
+        data={note}
+        onChange={onChange}
+        onDelete={onDelete}
+        onOutline={onOutline}
+        onPrewrite={onPrewrite}
+        flashId={flashId}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+      />
+    );
+  }
+  if (note.type === "article") {
+    return (
+      <ArticleSummaryCard
         index={index}
         data={note}
         onChange={onChange}
@@ -3955,6 +4136,17 @@ function buildSearchIndex(courses) {
           text = [titleText, ruleText, tlText].filter(Boolean).join(" ");
           title = titleText || "Untitled doctrine";
           snippet = ruleText;
+        } else if (note.type === "article") {
+          typeLabel = "Article summary";
+          const titleText = stripHtml(note.title);
+          const citationText = stripHtml(note.citation);
+          const thesisText = stripHtml(note.thesis);
+          const ideasText = (note.ideas || [])
+            .map((i) => `${i.label} ${stripHtml(i.content)}`)
+            .join(" ");
+          text = [titleText, citationText, thesisText, ideasText].filter(Boolean).join(" ");
+          title = titleText || "Untitled article";
+          snippet = thesisText;
         } else {
           const caseNameText = stripHtml(note.caseName);
           const citationText = stripHtml(note.citation);
@@ -6040,6 +6232,7 @@ function BaseStyles() {
       }
       .btc-note-badge.concept { color: var(--spine); }
       .btc-note-badge.evolution { color: var(--accent); }
+      .btc-note-badge.article { color: #8A6A16; }
 
       .btc-note-actions { display: flex; gap: 2px; flex-shrink: 0; }
 
@@ -6084,6 +6277,19 @@ function BaseStyles() {
       }
       .btc-current-rule-box .btc-field-label { border-left-color: var(--spine); margin-bottom: 6px; }
       .btc-current-rule-box .btc-textarea { background: var(--paper-raised); }
+
+      .btc-idea-block {
+        border: 1px solid var(--rule-strong); background: var(--paper-raised);
+        border-radius: 3px; padding: 12px 14px; margin-bottom: 14px;
+      }
+      .btc-idea-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+      .btc-idea-label-input {
+        flex: 1; border: none; border-bottom: 1px solid transparent; background: none;
+        font-family: 'Inter', sans-serif; font-size: 0.78rem; font-weight: 600; color: #8A6A16;
+        text-transform: uppercase; letter-spacing: 0.03em; padding: 2px 0;
+      }
+      .btc-idea-label-input:focus { border-bottom-color: var(--rule-strong); outline: none; }
+      .btc-idea-label-input::placeholder { color: #8A6A16; opacity: 0.6; text-transform: uppercase; }
 
       .btc-toast {
         position: fixed; bottom: 22px; right: 22px; z-index: 50;
