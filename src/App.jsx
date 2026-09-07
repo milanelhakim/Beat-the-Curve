@@ -883,6 +883,10 @@ function mdToBlocks(raw) {
   return blocks;
 }
 
+function boldLabelBlock(text) {
+  return { type: "p", text, runs: [{ text, bold: true }] };
+}
+
 function noteToBlocks(note, idx) {
   const blocks = [];
   if (note.type === "concept") {
@@ -891,7 +895,7 @@ function noteToBlocks(note, idx) {
     if (!htmlIsBlank(note.summary)) blocks.push(...htmlToBlocks(note.summary));
     const cases = (note.cases || []).filter((c) => c.caseName || c.note);
     if (cases.length) {
-      blocks.push({ type: "p", text: "Linked cases:" });
+      blocks.push(boldLabelBlock("Linked cases:"));
       cases.forEach((c) =>
         blocks.push({
           type: "li",
@@ -905,12 +909,12 @@ function noteToBlocks(note, idx) {
     const titleText = htmlIsBlank(note.title) ? "Untitled doctrine" : htmlToPlainText(note.title);
     blocks.push({ type: "h4", text: `${idx}. Evolution of law: ${titleText}` });
     if (!htmlIsBlank(note.currentRule)) {
-      blocks.push({ type: "p", text: "Current governing rule:" });
+      blocks.push(boldLabelBlock("Current governing rule:"));
       blocks.push(...htmlToBlocks(note.currentRule));
     }
     const tl = (note.timeline || []).filter((t) => t.caseName || t.development);
     if (tl.length) {
-      blocks.push({ type: "p", text: "History, oldest to newest:" });
+      blocks.push(boldLabelBlock("History, oldest to newest:"));
       tl.forEach((t) =>
         blocks.push({
           type: "li",
@@ -925,12 +929,12 @@ function noteToBlocks(note, idx) {
     const citeText = htmlIsBlank(note.citation) ? "" : htmlToPlainText(note.citation);
     blocks.push({ type: "h4", text: `${idx}. Article: ${titleText}${citeText ? ` — ${citeText}` : ""}` });
     if (!htmlIsBlank(note.thesis)) {
-      blocks.push({ type: "p", text: "Main thesis:" });
+      blocks.push(boldLabelBlock("Main thesis:"));
       blocks.push(...htmlToBlocks(note.thesis));
     }
     (note.ideas || []).forEach((i) => {
       if (htmlIsBlank(i.content)) return;
-      blocks.push({ type: "p", text: `${i.label || "Supporting idea"}:` });
+      blocks.push(boldLabelBlock(`${i.label || "Supporting idea"}:`));
       blocks.push(...htmlToBlocks(i.content));
     });
   } else {
@@ -940,7 +944,7 @@ function noteToBlocks(note, idx) {
     blocks.push({ type: "h4", text: `${idx}. ${name}${cite}` });
     const pushLabeled = (label, html) => {
       if (htmlIsBlank(html)) return;
-      blocks.push({ type: "p", text: `${label}:` });
+      blocks.push(boldLabelBlock(`${label}:`));
       blocks.push(...htmlToBlocks(html));
     };
     pushLabeled("Facts", note.facts);
@@ -970,7 +974,7 @@ function readingNotesBlocks(week) {
 function lectureBlocks(week) {
   const blocks = [];
   const pushLabeled = (label, html) => {
-    blocks.push({ type: "p", text: `${label}:` });
+    blocks.push(boldLabelBlock(`${label}:`));
     if (htmlIsBlank(html)) {
       blocks.push({ type: "p", text: "—" });
     } else {
@@ -6160,7 +6164,8 @@ function BaseStyles() {
       .btc-split-handle:hover::after { background: var(--spine); }
 
       /* ---------- Fields ---------- */
-      .btc-field { margin-bottom: 14px; }
+      .btc-field { margin-top: 22px; margin-bottom: 4px; }
+      .btc-field:first-child { margin-top: 0; }
       .btc-field-label {
         display: block; font-family: 'Inter', sans-serif; font-size: 0.74rem;
         color: var(--spine); margin-bottom: 5px; padding-left: 8px;
@@ -6253,10 +6258,10 @@ function BaseStyles() {
       .btc-addnote-option-title { font-family: 'Newsreader', Georgia, serif; font-weight: 600; font-size: 0.95rem; }
       .btc-addnote-option-desc { font-family: 'Inter', sans-serif; font-size: 0.76rem; color: var(--muted); line-height: 1.35; }
 
-      .btc-linked-cases { margin-top: 6px; }
+      .btc-linked-cases { margin-top: 20px; }
       .btc-linked-cases-label {
         font-family: 'Inter', sans-serif; font-size: 0.74rem; color: var(--spine);
-        margin-bottom: 8px; padding-left: 8px; border-left: 2px solid var(--rule-strong);
+        margin-bottom: 4px; padding-left: 8px; border-left: 2px solid var(--rule-strong);
       }
       .btc-linked-case-row, .btc-timeline-row {
         display: flex; gap: 6px; align-items: center; margin-bottom: 6px; flex-wrap: wrap;
@@ -6280,9 +6285,9 @@ function BaseStyles() {
 
       .btc-idea-block {
         border: 1px solid var(--rule-strong); background: var(--paper-raised);
-        border-radius: 3px; padding: 12px 14px; margin-bottom: 14px;
+        border-radius: 3px; padding: 12px 14px; margin-top: 20px;
       }
-      .btc-idea-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+      .btc-idea-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
       .btc-idea-label-input {
         flex: 1; border: none; border-bottom: 1px solid transparent; background: none;
         font-family: 'Inter', sans-serif; font-size: 0.78rem; font-weight: 600; color: #8A6A16;
