@@ -5652,7 +5652,7 @@ export default function BeatTheCurve() {
           </button>
           <button className="btc-wordmark" onClick={() => setShowHomepage(true)} title="Back to all courses">
             <Scale size={17} />
-            <span>Beat the Curve</span>
+            {(showHomepage || !currentCourse) && <span>Beat the Curve</span>}
           </button>
         </div>
 
